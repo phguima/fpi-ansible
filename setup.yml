@@ -124,6 +124,97 @@
       when: "'amd' in gpu_info.stdout | lower or 'ati' in gpu_info.stdout | lower"
       tags: [hardware, amd]
 
+    # --- NVIDIA Driver Installation ---
+    - name: Hardware | Detect NVIDIA Driver status
+      ansible.builtin.command: nvidia-smi
+      register: nvidia_smi_status
+      ignore_errors: yes
+      changed_when: false
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Install NVIDIA Prerequisites (Stage 1)
+      ansible.builtin.dnf:
+        name: "{{ nvidia_packages_stage1 }}"
+        state: present
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      tags: [hardware, nvidia]
+
+      # --- Nvidia Configuration and Power Management ---
+    - name: Hardware | Check if MOK key exists
+      ansible.builtin.stat:
+        path: /etc/pki/akmods/certs/public_key.der
+      register: mok_key
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Generate MOK key if missing
+      ansible.builtin.command: kmodgenca -a
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and not mok_key.stat.exists"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Prompt for MOK enrollment
+      ansible.builtin.pause:
+        prompt: |
+          >>> IMPORTANT: NVIDIA MOK Enrollment <<<
+          A Secure Boot key must be imported. Please follow these steps:
+          1. Open a separate terminal (or focus this shell with CTRL+F if interactive).
+          2. Run: sudo mokutil --import /etc/pki/akmods/certs/public_key.der
+          3. Set a password (easy to remember).
+          4. After doing this, return here and press ENTER.
+          >>> YOU WILL NEED TO REBOOT AFTER THIS PLAYBOOK FINISHES <<<
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and not mok_key.stat.exists"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Install NVIDIA Drivers (Stage 2)
+      ansible.builtin.dnf:
+        name: "{{ nvidia_packages_stage2 }}"
+        state: present
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Build NVIDIA kernel modules (akmods)
+      ansible.builtin.command: akmods --force
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      async: 600
+      poll: 10
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Update initramfs (dracut)
+      ansible.builtin.command: dracut --force
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Enable NVIDIA Power Management services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: yes
+      loop:
+        - nvidia-suspend
+        - nvidia-resume
+        - nvidia-hibernate
+      when: "'nvidia' in gpu_info.stdout | lower"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Configure NVIDIA Dynamic Power Management
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/nvidia.conf
+        content: "{{ nvidia_dpm_config }}"
+        mode: '0644'
+      when: "'nvidia' in gpu_info.stdout | lower"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Configure NVIDIA GLX Variables for ZSH
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_env.HOME }}/.zshrc"
+        marker: "# {mark} NVIDIA CONFIGURATION"
+        block: |
+          # Finer-Grained Control of GLX + OpenGL
+          export __NV_PRIME_RENDER_OFFLOAD_PROVIDER=NVIDIA-G0
+          export __GLX_VENDOR_LIBRARY_NAME=nvidia
+        create: yes
+      when: "'nvidia' in gpu_info.stdout | lower"
+      tags: [hardware, nvidia]
+
   handlers:
     - name: Regenerate GRUB
       ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
