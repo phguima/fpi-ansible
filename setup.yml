@@ -47,9 +47,28 @@
       changed_when: false
       tags: [system, flatpak]
 
+    # --- GRUB Configuration ---
+    - name: System | Configure GRUB settings
+      ansible.builtin.lineinfile:
+        path: /etc/default/grub
+        regexp: '^{{ item.key }}='
+        line: '{{ item.key }}={{ item.value }}'
+        state: present
+      loop:
+        - { key: "GRUB_TIMEOUT", value: "{{ grub_timeout }}" }
+        - { key: "GRUB_TERMINAL_OUTPUT", value: '"{{ grub_terminal_output }}"' }
+        - { key: "GRUB_GFXPAYLOAD", value: '"{{ grub_gfxpayload }}"' }
+        - { key: "GRUB_GFXMODE", value: '"{{ grub_gfxmode }}"' }
+      notify: Regenerate GRUB
+      tags: [system, grub]
+
     # --- Hardware & Drivers ---
     - name: Hardware | Detect GPU Type
       ansible.builtin.shell: lspci | grep -iE "vga|3d"
       register: gpu_info
       changed_when: false
       tags: [hardware]
+
+  handlers:
+    - name: Regenerate GRUB
+      ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
