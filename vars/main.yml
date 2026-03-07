@@ -1,0 +1,64 @@
+---
+# DNF Optimization
+dnf_max_parallel_downloads: 15
+dnf_fastestmirror: "True"
+
+# Package Lists from .packages files
+dnf_packages_common:
+  - argyllcms
+  - btrfs-assistant
+  - chromium
+  - clamav
+  - clamav-update
+  - fastfetch
+  - hwinfo
+  - lm_sensors
+  - nodejs
+  - nvtop
+  - python3-pip
+  - p7zip
+  - p7zip-plugins
+  - rawtherapee
+  - solaar
+  - steam
+  - testdisk
+  - unrar
+  - unzip
+  - vim
+  - virtualbox
+  - vlc
+  - vlc-bittorrent
+
+dnf_packages_gnome:
+  - flatseal
+  - gnome-tweaks
+
+dnf_packages_kde:
+  - ktorrent
+
+flatpak_apps_common:
+  - com.bitwarden.desktop
+  - com.dec05eba.gpu_screen_recorder
+  - com.google.AndroidStudio
+  - com.jetbrains.IntelliJ-IDEA-Community
+  - com.jetbrains.PyCharm-Professional
+  - com.spotify.Client
+  - net.displaycal.DisplayCAL
+  - org.ferdium.Ferdium
+  - org.zotero.Zotero
+  - us.zoom.Zoom
+
+flatpak_apps_gnome:
+  - com.github.unrud.VideoDownloader
+  - com.mattjakeman.ExtensionManager
+  - de.haeckerfelix.Fragments
+
+flatpak_apps_kde:
+  - com.markopejic.downloader
+
+fonts_packages:
+  - fira-code-fonts
+  - google-roboto-fonts
+
+# Oh-My-Zsh settings
+omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/main/omz-themes/kali-like-alt.zsh-theme"
