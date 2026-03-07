@@ -69,10 +69,17 @@
       when: "'debug' in ansible_kernel"
       tags: [system, kernel]
 
+    - name: System | Get list of installed debug kernels
+      ansible.builtin.shell: dnf repoquery --installed "kernel*debug*" -q
+      register: installed_debug_kernels
+      changed_when: false
+      tags: [system, kernel]
+
     - name: System | Remove kernel debug packages
       ansible.builtin.dnf:
-        name: "kernel*debug*"
+        name: "{{ installed_debug_kernels.stdout_lines }}"
         state: absent
+      when: installed_debug_kernels.stdout_lines | length > 0
       notify: Regenerate GRUB
       tags: [system, kernel]
 
