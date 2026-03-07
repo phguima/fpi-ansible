@@ -132,6 +132,7 @@
       changed_when: false
       tags: [hardware, nvidia]
 
+    # STAGE 1: Prerequisites and MOK Generation
     - name: Hardware | Install NVIDIA Prerequisites (Stage 1)
       ansible.builtin.dnf:
         name: "{{ nvidia_packages_stage1 }}"
@@ -139,49 +140,61 @@
       when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
       tags: [hardware, nvidia]
 
-      # --- Nvidia Configuration and Power Management ---
-    - name: Hardware | Check if MOK key exists
+    - name: Hardware | Check if MOK key file exists
       ansible.builtin.stat:
         path: /etc/pki/akmods/certs/public_key.der
-      register: mok_key
+      register: mok_key_file
       when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
       tags: [hardware, nvidia]
 
     - name: Hardware | Generate MOK key if missing
       ansible.builtin.command: kmodgenca -a
-      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and not mok_key.stat.exists"
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and not mok_key_file.stat.exists"
       tags: [hardware, nvidia]
 
-    - name: Hardware | Prompt for MOK enrollment
+    - name: Hardware | Check MOK enrollment status in BIOS
+      ansible.builtin.command: mokutil --test-key /etc/pki/akmods/certs/public_key.der
+      register: mok_test
+      ignore_errors: yes
+      changed_when: false
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      tags: [hardware, nvidia]
+
+    - name: Hardware | Import MOK key and Request Reboot
       ansible.builtin.pause:
         prompt: |
-          >>> IMPORTANT: NVIDIA MOK Enrollment <<<
-          A Secure Boot key must be imported. Please follow these steps:
-          1. Open a separate terminal (or focus this shell with CTRL+F if interactive).
-          2. Run: sudo mokutil --import /etc/pki/akmods/certs/public_key.der
-          3. Set a password (easy to remember).
-          4. After doing this, return here and press ENTER.
-          >>> YOU WILL NEED TO REBOOT AFTER THIS PLAYBOOK FINISHES <<<
-      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and not mok_key.stat.exists"
+          >>> NVIDIA SECURE BOOT ENROLLMENT REQUIRED <<<
+          The MOK key is NOT enrolled in your BIOS.
+          
+          1. Open a terminal and run: 
+             sudo mokutil --import /etc/pki/akmods/certs/public_key.der
+          2. Set a temporary password for the BIOS.
+          3. REBOOT YOUR COMPUTER NOW.
+          4. During boot, select "Enroll MOK" -> "Continue" -> "Yes" -> Enter Password.
+          5. Re-run this playbook after the system restarts.
+          
+          Press CTRL+C then 'A' to abort the playbook for reboot, or ENTER if you have already done this.
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and (mok_test.rc is defined and mok_test.rc != 0)"
       tags: [hardware, nvidia]
 
+    # STAGE 2: Driver Installation (Only proceeds if MOK is enrolled or nvidia-smi already works)
     - name: Hardware | Install NVIDIA Drivers (Stage 2)
       ansible.builtin.dnf:
         name: "{{ nvidia_packages_stage2 }}"
         state: present
-      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and (mok_test.rc is defined and mok_test.rc == 0 or mok_test is skipped)"
       tags: [hardware, nvidia]
 
     - name: Hardware | Build NVIDIA kernel modules (akmods)
       ansible.builtin.command: akmods --force
-      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and (mok_test.rc is defined and mok_test.rc == 0 or mok_test is skipped)"
       async: 600
       poll: 10
       tags: [hardware, nvidia]
 
     - name: Hardware | Update initramfs (dracut)
       ansible.builtin.command: dracut --force
-      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0"
+      when: "'nvidia' in gpu_info.stdout | lower and nvidia_smi_status.rc != 0 and (mok_test.rc is defined and mok_test.rc == 0 or mok_test is skipped)"
       tags: [hardware, nvidia]
 
     - name: Hardware | Enable NVIDIA Power Management services
