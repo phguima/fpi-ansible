@@ -62,6 +62,39 @@
       notify: Regenerate GRUB
       tags: [system, grub]
 
+    # --- Kernel Maintenance ---
+    - name: System | Prevent removal of debug packages if running debug kernel
+      ansible.builtin.fail:
+        msg: "You are currently running a DEBUG kernel ({{ ansible_kernel }}). Please boot into a normal kernel before proceeding."
+      when: "'debug' in ansible_kernel"
+      tags: [system, kernel]
+
+    - name: System | Remove kernel debug packages
+      ansible.builtin.dnf:
+        name: "kernel*debug*"
+        state: absent
+      notify: Regenerate GRUB
+      tags: [system, kernel]
+
+    - name: System | Disable debug repositories
+      ansible.builtin.command: dnf config-manager --set-disabled "*debug*"
+      changed_when: false
+      tags: [system, kernel]
+
+    - name: System | Get list of old kernels
+      ansible.builtin.shell: dnf repoquery --installonly --latest-limit=-1 -q
+      register: old_kernels_list
+      changed_when: false
+      tags: [system, kernel]
+
+    - name: System | Remove old kernels
+      ansible.builtin.dnf:
+        name: "{{ old_kernels_list.stdout_lines }}"
+        state: absent
+      when: old_kernels_list.stdout_lines | length > 0
+      notify: Regenerate GRUB
+      tags: [system, kernel]
+
     # --- Hardware & Drivers ---
     - name: Hardware | Detect GPU Type
       ansible.builtin.shell: lspci | grep -iE "vga|3d"
