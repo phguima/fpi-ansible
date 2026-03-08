@@ -21,31 +21,6 @@ amd_multimedia_packages:
   - libva-utils
   - vdpauinfo
 
-nvidia_packages_stage1:
-  - akmods
-  - kmodtool
-  - openssl
-  - mokutil
-
-nvidia_packages_stage2:
-  - akmod-nvidia
-  - gcc
-  - kernel-devel
-  - kernel-headers
-  - xorg-x11-drv-nvidia
-  - xorg-x11-drv-nvidia-cuda
-  - xorg-x11-drv-nvidia-libs
-  - xorg-x11-drv-nvidia-libs.i686
-  - xorg-x11-drv-nvidia-power
-  - xorg-x11-drv-nvidia-cuda-libs
-  - vulkan
-
-nvidia_dpm_config: |
-  # Enable DynamicPowerManagement
-  # http://download.nvidia.com/XFree86/Linux-x86_64/440.31/README/dynamicpowermanagement.html
-  options nvidia NVreg_DynamicPowerManagement=0x02
-  options nvidia NVreg_TemporaryFilePath=/var/tmp
-
 # Package Lists from .packages files
 dnf_packages_common:
   - argyllcms
@@ -104,4 +79,12 @@ fonts_packages:
   - google-roboto-fonts
 
 # Oh-My-Zsh settings
+omz_install_script_url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/main/omz-themes/kali-like-alt.zsh-theme"
+omz_theme_name: "kali-like-alt"
+zsh_aliases: |
+  alias zshconfig="nano ~/.zshrc"
+  alias ohmyzsh="nano ~/.oh-my-zsh"
+  alias lls="ls --color -lh --group-directories-first"
+  alias llsa="ls --color -lha --group-directories-first"
+  alias geminicliup="sudo npm install -g @google/gemini-cli"

@@ -1,0 +1,134 @@
+---
+- name: Fedora Post-Install Setup - Stage 2: NVIDIA Driver Installation
+  hosts: localhost
+  become: yes
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    # --- Flatpak Configuration ---
+    - name: System | Enable Flathub Repository
+      ansible.builtin.shell: |
+        flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      changed_when: false
+      tags: [system, flatpak]
+    
+    # --- Kernel Maintenance ---
+    - name: Kernel | Prevent removal of debug packages if running debug kernel
+      ansible.builtin.fail:
+        msg: "You are currently running a DEBUG kernel ({{ ansible_kernel }}). Please boot into a normal kernel before proceeding."
+      when: "'debug' in ansible_kernel"
+      tags: [system, kernel]
+
+    - name: Kernel | Get list of installed debug kernels
+      ansible.builtin.shell: dnf repoquery --installed "kernel*debug*" -q
+      register: installed_debug_kernels
+      changed_when: false
+      tags: [system, kernel]
+
+    - name: Kernel | Remove kernel debug packages
+      ansible.builtin.dnf:
+        name: "{{ installed_debug_kernels.stdout_lines }}"
+        state: absent
+      when: installed_debug_kernels.stdout_lines | length > 0
+      notify: Regenerate GRUB
+      tags: [system, kernel]
+
+    - name: Kernel | Disable debug repositories
+      ansible.builtin.shell: dnf config-manager setopt "*debug*".enabled=0
+      changed_when: false
+      tags: [system, kernel]
+
+    - name: Kernel | Get list of old kernels
+      ansible.builtin.shell: dnf repoquery --installonly --latest-limit=-1 -q
+      register: old_kernels_list
+      changed_when: false
+      tags: [system, kernel]
+
+    - name: Kernel | Remove old kernels
+      ansible.builtin.dnf:
+        name: "{{ old_kernels_list.stdout_lines }}"
+        state: absent
+      when: old_kernels_list.stdout_lines | length > 0
+      notify: Regenerate GRUB
+      tags: [system, kernel]
+    
+    # --- Hardware & Drivers ---
+    - name: Hardware | Detect GPU Type
+      ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
+      register: gpu_info
+      changed_when: false
+      tags: [hardware]
+
+    - name: Hardware | Install Intel Media Drivers
+      ansible.builtin.dnf:
+        name: "{{ intel_media_packages }}"
+        state: present
+      when: "'intel' in gpu_info.stdout | lower"
+      tags: [hardware, intel]
+
+    - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
+      ansible.builtin.dnf:
+        name: "{{ amd_multimedia_packages }}"
+        state: present
+        allowerasing: yes
+      when: "'amd' in gpu_info.stdout | lower or 'ati' in gpu_info.stdout | lower"
+      tags: [hardware, amd]
+    
+    # --- Zsh and Oh-My-Zsh ---
+    - name: Shell | Install ZSH, Git, and Curl
+      ansible.builtin.dnf:
+        name: [zsh, git, curl]
+        state: present
+      tags: [shell, omz]
+
+    - name: Shell | Identify target users and their home directories
+      set_fact:
+        zsh_users:
+          - name: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+            home: "{{ ansible_env.HOME if (ansible_env.SUDO_USER | default(ansible_user_id)) == ansible_user_id else '/home/' + (ansible_env.SUDO_USER | default(ansible_user_id)) }}"
+          - name: "root"
+            home: "/root"
+      tags: [shell, omz]
+
+    - name: Shell | Ensure Oh-My-Zsh is installed for users
+      ansible.builtin.shell:
+        cmd: "curl -fsSL {{ omz_install_script_url }} | sh -s -- --unattended --keep-zshrc"
+        creates: "{{ item.home }}/.oh-my-zsh"
+      become_user: "{{ item.name }}"
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]
+
+    - name: Shell | Change default shell to ZSH
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        shell: /bin/zsh
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]
+
+    - name: Shell | Download custom theme for users
+      ansible.builtin.get_url:
+        url: "{{ omz_theme_url }}"
+        dest: "{{ item.home }}/.oh-my-zsh/themes/{{ omz_theme_name }}.zsh-theme"
+        owner: "{{ item.name }}"
+        mode: '0644'
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]
+
+    - name: Shell | Set theme in .zshrc
+      ansible.builtin.lineinfile:
+        path: "{{ item.home }}/.zshrc"
+        regexp: '^ZSH_THEME='
+        line: 'ZSH_THEME="{{ omz_theme_name }}"'
+        owner: "{{ item.name }}"
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]
+
+    - name: Shell | Add custom aliases to .zshrc
+      ansible.builtin.blockinfile:
+        path: "{{ item.home }}/.zshrc"
+        marker: "# {mark} ANSIBLE MANAGED ALIASES"
+        block: "{{ zsh_aliases }}"
+        owner: "{{ item.name }}"
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]    
