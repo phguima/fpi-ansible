@@ -56,13 +56,14 @@
       ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
       register: gpu_info
       changed_when: false
+      failed_when: false
       tags: [hardware]
 
     - name: Hardware | Install Intel Media Drivers
       ansible.builtin.dnf:
         name: "{{ intel_media_packages }}"
         state: present
-      when: "'intel' in gpu_info.stdout | lower"
+      when: gpu_info.stdout | lower | regex_search('\bintel\b')
       tags: [hardware, intel]
 
     - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
@@ -70,7 +71,7 @@
         name: "{{ amd_multimedia_packages }}"
         state: present
         allowerasing: yes
-      when: "'amd' in gpu_info.stdout | lower or 'ati' in gpu_info.stdout | lower"
+      when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
       tags: [hardware, amd]
     
     # --- Zsh and Oh-My-Zsh ---
