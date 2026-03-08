@@ -74,19 +74,35 @@
       tags: [hardware, amd]
     
     # --- Zsh and Oh-My-Zsh ---
+    - name: Shell | Debug User Information
+      ansible.builtin.debug:
+        msg: 
+          - "Current User ID (ansible_user_id): {{ ansible_user_id }}"
+          - "Sudo User (ansible_env.SUDO_USER): {{ ansible_env.SUDO_USER | default('None') }}"
+      tags: [shell, omz, debug]
+
     - name: Shell | Install ZSH, Git, and Curl
       ansible.builtin.dnf:
-        name: [zsh, git, curl]
+        name: [zsh, git, curl, fira-code-fonts]
         state: present
+      tags: [shell, omz]
+
+    - name: Shell | Get home directory of the primary user
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_env.SUDO_USER }}"
+      register: primary_user_data
+      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, omz]
 
     - name: Shell | Identify target users and their home directories
       set_fact:
-        zsh_users:
-          - name: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
-            home: "{{ ansible_env.HOME if (ansible_env.SUDO_USER | default(ansible_user_id)) == ansible_user_id else '/home/' + (ansible_env.SUDO_USER | default(ansible_user_id)) }}"
-          - name: "root"
-            home: "/root"
+        zsh_users: >-
+          {% set users = [{'name': 'root', 'home': '/root'}] %}
+          {% if ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root' %}
+            {% set _ = users.append({'name': ansible_env.SUDO_USER, 'home': primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4]}) %}
+          {% endif %}
+          {{ users }}
       tags: [shell, omz]
 
     - name: Shell | Ensure Oh-My-Zsh is installed for users
@@ -94,14 +110,25 @@
         cmd: "curl -fsSL {{ omz_install_script_url }} | sh -s -- --unattended --keep-zshrc"
         creates: "{{ item.home }}/.oh-my-zsh"
       become_user: "{{ item.name }}"
-      loop: "{{ zsh_users }}"
+      loop: "{{ zsh_users | unique }}"
+      tags: [shell, omz]
+
+    - name: Shell | Ensure .zshrc exists (copy template if missing)
+      ansible.builtin.copy:
+        src: "{{ item.home }}/.oh-my-zsh/templates/zshrc.zsh-template"
+        dest: "{{ item.home }}/.zshrc"
+        remote_src: yes
+        owner: "{{ item.name }}"
+        mode: '0644'
+        force: no
+      loop: "{{ zsh_users | unique }}"
       tags: [shell, omz]
 
     - name: Shell | Change default shell to ZSH
       ansible.builtin.user:
         name: "{{ item.name }}"
         shell: /bin/zsh
-      loop: "{{ zsh_users }}"
+      loop: "{{ zsh_users | unique }}"
       tags: [shell, omz]
 
     - name: Shell | Download custom theme for users
@@ -110,7 +137,7 @@
         dest: "{{ item.home }}/.oh-my-zsh/themes/{{ omz_theme_name }}.zsh-theme"
         owner: "{{ item.name }}"
         mode: '0644'
-      loop: "{{ zsh_users }}"
+      loop: "{{ zsh_users | unique }}"
       tags: [shell, omz]
 
     - name: Shell | Set theme in .zshrc
@@ -119,7 +146,7 @@
         regexp: '^ZSH_THEME='
         line: 'ZSH_THEME="{{ omz_theme_name }}"'
         owner: "{{ item.name }}"
-      loop: "{{ zsh_users }}"
+      loop: "{{ zsh_users | unique }}"
       tags: [shell, omz]
 
     - name: Shell | Add custom aliases to .zshrc
@@ -128,5 +155,6 @@
         marker: "# {mark} ANSIBLE MANAGED ALIASES"
         block: "{{ zsh_aliases }}"
         owner: "{{ item.name }}"
-      loop: "{{ zsh_users }}"
-      tags: [shell, omz]    
+      loop: "{{ zsh_users | unique }}"
+      tags: [shell, omz]
+    
