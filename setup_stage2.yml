@@ -1,5 +1,5 @@
 ---
-- name: Fedora Post-Install Setup - Stage 2 - NVIDIA Driver Installation
+- name: Fedora Post-Install Setup - Stage 2 - Software Installation and Configuration
   hosts: localhost
   become: yes
   vars_files:
@@ -31,7 +31,6 @@
         name: "{{ installed_debug_kernels.stdout_lines }}"
         state: absent
       when: installed_debug_kernels.stdout_lines | length > 0
-      notify: Regenerate GRUB
       tags: [system, kernel]
 
     - name: Kernel | Disable debug repositories
@@ -50,7 +49,6 @@
         name: "{{ old_kernels_list.stdout_lines }}"
         state: absent
       when: old_kernels_list.stdout_lines | length > 0
-      notify: Regenerate GRUB
       tags: [system, kernel]
     
     # --- Hardware & Drivers ---
