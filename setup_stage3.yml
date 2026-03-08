@@ -1,0 +1,33 @@
+---
+- name: Fedora Post-Install Setup - Stage 3: Software Installation
+  hosts: localhost
+  become: yes
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    # --- Multimedia Codecs & FFmpeg Swap ---
+    - name: Software | Swap ffmpeg-free for full ffmpeg (RPM Fusion)
+      ansible.builtin.dnf:
+        name: ffmpeg
+        allowerasing: yes
+        state: present
+      tags: [software, multimedia, ffmpeg]
+
+    - name: Software | Install Multimedia Group and Codecs
+      ansible.builtin.dnf:
+        name:
+          - "@multimedia"
+          - gstreamer1-plugins-bad-free-extras
+          - gstreamer1-plugins-bad-freeworld
+          - gstreamer1-plugins-ugly
+          - gstreamer1-libav
+        state: present
+      tags: [software, multimedia]
+
+    - name: Software | Install NVIDIA VA-API Driver
+      ansible.builtin.dnf:
+        name: libva-nvidia-driver
+        state: present
+      when: gpu_info is defined and 'nvidia' in gpu_info.stdout | lower
+      tags: [software, multimedia, nvidia]

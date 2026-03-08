@@ -82,6 +82,8 @@ fonts_packages:
 omz_install_script_url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/main/omz-themes/kali-like-alt.zsh-theme"
 omz_theme_name: "kali-like-alt"
+
+# Zsh Aliases
 zsh_aliases: |
   alias zshconfig="nano ~/.zshrc"
   alias ohmyzsh="nano ~/.oh-my-zsh"

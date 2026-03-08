@@ -166,5 +166,38 @@
         owner: "{{ item.name }}"
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
-
     
+     # --- Desktop Environment Detection ---
+    - name: System | Detect Desktop Environment
+      set_fact:
+        is_gnome: "{{ 'GNOME' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
+        is_kde: "{{ 'KDE' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) or 'PLASMA' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
+      tags: [system, detection]
+
+    # --- DNF Package Installation ---
+    - name: Software | Install Common DNF Packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages_common }}"
+        state: present
+      tags: [software, dnf, common]
+
+    - name: Software | Install GNOME Specific DNF Packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages_gnome }}"
+        state: present
+      when: is_gnome
+      tags: [software, dnf, gnome]
+
+    - name: Software | Install KDE Specific DNF Packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages_kde }}"
+        state: present
+      when: is_kde
+      tags: [software, dnf, kde]
+
+    # --- Font Installation ---
+    - name: Software | Install Selected Fonts
+      ansible.builtin.dnf:
+        name: "{{ fonts_packages }}"
+        state: present
+      tags: [software, fonts]    
