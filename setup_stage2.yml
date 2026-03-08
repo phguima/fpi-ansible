@@ -1,5 +1,5 @@
 ---
-- name: Fedora Post-Install Setup - Stage 2: NVIDIA Driver Installation
+- name: Fedora Post-Install Setup - Stage 2 - NVIDIA Driver Installation
   hosts: localhost
   become: yes
   vars_files:
