@@ -89,6 +89,10 @@ asus_packages:
 vscode_gpg_key: "https://packages.microsoft.com/keys/microsoft.asc"
 vscode_repo_url: "https://packages.microsoft.com/yumrepos/vscode"
 
+# Brave Browser Settings
+brave_gpg_key: "https://brave-browser-rpm-release.s3.brave.com/brave-core.asc"
+brave_repo_url: "https://brave-browser-rpm-release.s3.brave.com/x86_64/"
+
 # Oh-My-Zsh settings
 omz_install_script_url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/main/omz-themes/kali-like-alt.zsh-theme"

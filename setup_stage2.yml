@@ -245,22 +245,6 @@
       tags: [system, detection, debug]
     
     # --- DNF Package Installation ---
-    - name: Software | Add Visual Studio Code Repository
-      ansible.builtin.yum_repository:
-        name: code
-        description: Visual Studio Code
-        baseurl: "{{ vscode_repo_url }}"
-        enabled: yes
-        gpgcheck: yes
-        gpgkey: "{{ vscode_gpg_key }}"
-      tags: [software, vscode]
-
-    - name: Software | Install Visual Studio Code
-      ansible.builtin.dnf:
-        name: code
-        state: present
-      tags: [software, vscode]
-
     - name: Software | Install Common DNF Packages
       ansible.builtin.dnf:
         name: "{{ dnf_packages_common }}"
@@ -280,6 +264,40 @@
         state: present
       when: is_kde
       tags: [software, dnf, kde]
+      
+    # --- VS Code Installation ---
+    - name: Software | Add Visual Studio Code Repository
+      ansible.builtin.yum_repository:
+        name: code
+        description: Visual Studio Code
+        baseurl: "{{ vscode_repo_url }}"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: "{{ vscode_gpg_key }}"
+      tags: [software, vscode]
+
+    - name: Software | Install Visual Studio Code
+      ansible.builtin.dnf:
+        name: code
+        state: present
+      tags: [software, vscode]
+
+    # --- Brave Browser Installation ---
+    - name: Software | Add Brave Browser Repository
+      ansible.builtin.yum_repository:
+        name: brave-browser
+        description: Brave Browser
+        baseurl: "{{ brave_repo_url }}"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: "{{ brave_gpg_key }}"
+      tags: [software, brave]
+
+    - name: Software | Install Brave Browser
+      ansible.builtin.dnf:
+        name: brave-browser
+        state: present
+      tags: [software, brave]
 
     # --- Font Installation ---
     - name: Software | Install Selected Fonts
