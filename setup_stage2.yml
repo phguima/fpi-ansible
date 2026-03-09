@@ -245,6 +245,22 @@
       tags: [system, detection, debug]
     
     # --- DNF Package Installation ---
+    - name: Software | Add Visual Studio Code Repository
+      ansible.builtin.yum_repository:
+        name: code
+        description: Visual Studio Code
+        baseurl: "{{ vscode_repo_url }}"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: "{{ vscode_gpg_key }}"
+      tags: [software, vscode]
+
+    - name: Software | Install Visual Studio Code
+      ansible.builtin.dnf:
+        name: code
+        state: present
+      tags: [software, vscode]
+
     - name: Software | Install Common DNF Packages
       ansible.builtin.dnf:
         name: "{{ dnf_packages_common }}"
