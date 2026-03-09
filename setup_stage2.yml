@@ -449,22 +449,17 @@
       tags: [software, kde, konsole]
 
     - name: Software | Disable Konsole 'Remember window size'
-      community.general.ini_file:
+      ansible.builtin.lineinfile:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/konsolerc"
-        section: KonsoleWindow
-        option: RememberWindowSize
-        value: "false"
-        owner: "{{ ansible_env.SUDO_USER }}"
-        mode: '0644'
+        regexp: '^RememberWindowSize='
+        line: 'RememberWindowSize=false'
+        insertafter: '\[KonsoleWindow\]'
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
 
     # --- GNOME Specific Configuration (PTYxis) ---
     - name: Software | Set PTYxis terminal window size and behavior
-      community.general.gsettings:
-        schema: org.gnome.Ptyxis
-        key: "{{ item.key }}"
-        value: "{{ item.value }}"
+      ansible.builtin.command: "gsettings set org.gnome.Ptyxis {{ item.key }} {{ item.value }}"
       become_user: "{{ ansible_env.SUDO_USER }}"
       loop:
         - { key: "restore-window-size", value: "{{ ptyxis_restore_window_size }}" }
@@ -474,9 +469,7 @@
       tags: [software, gnome, ptyxis]
 
     - name: Software | Set PTYxis cursor and font settings
-      community.general.dconf:
-        key: "/org/gnome/Ptyxis/{{ item.key }}"
-        value: "{{ item.value }}"
+      ansible.builtin.command: "dconf write /org/gnome/Ptyxis/{{ item.key }} \"{{ item.value }}\""
       become_user: "{{ ansible_env.SUDO_USER }}"
       loop:
         - { key: "cursor-shape", value: "'{{ ptyxis_cursor_shape }}'" }
@@ -495,9 +488,7 @@
       tags: [software, gnome, ptyxis]
 
     - name: Software | Set PTYxis transparency
-      community.general.dconf:
-        key: "/org/gnome/Ptyxis/Profiles/{{ ptyxis_default_uuid.stdout }}/opacity"
-        value: "{{ ptyxis_opacity }}"
+      ansible.builtin.command: "dconf write /org/gnome/Ptyxis/Profiles/{{ ptyxis_default_uuid.stdout }}/opacity {{ ptyxis_opacity }}"
       become_user: "{{ ansible_env.SUDO_USER }}"
       when: 
         - is_gnome 
