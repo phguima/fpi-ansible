@@ -320,31 +320,31 @@
         name: brave-browser
         state: present
       tags: [software, brave]
-# --- Font Installation ---
-- name: Software | Install Selected Fonts
-  ansible.builtin.dnf:
-    name: "{{ fonts_packages }}"
-    state: present
-  tags: [software, fonts]
+    # --- Font Installation ---
+    - name: Software | Install Selected Fonts
+      ansible.builtin.dnf:
+        name: "{{ fonts_packages }}"
+        state: present
+      tags: [software, fonts]
 
-# --- ProtonVPN Installation ---
-- name: Software | Install ProtonVPN Repository
-  ansible.builtin.dnf:
-    name: "{{ protonvpn_repo_url }}"
-    state: present
-    disable_gpg_check: yes
-  tags: [software, protonvpn]
+    # --- ProtonVPN Installation ---
+    - name: Software | Install ProtonVPN Repository
+      ansible.builtin.dnf:
+        name: "{{ protonvpn_repo_url }}"
+        state: present
+        disable_gpg_check: yes
+      tags: [software, protonvpn]
 
-- name: Software | Install ProtonVPN Application
-  ansible.builtin.dnf:
-    name: 
-      - python3-pip
-      - proton-vpn-gnome-desktop
-    state: present
-    update_cache: yes
-  tags: [software, protonvpn]
+    - name: Software | Install ProtonVPN Application
+      ansible.builtin.dnf:
+        name: 
+          - python3-pip
+          - proton-vpn-gnome-desktop
+        state: present
+        update_cache: yes
+      tags: [software, protonvpn]
 
-# --- Workspace and Specialized Tools ---
+    # --- Workspace and Specialized Tools ---
 
     - name: Shell | Create 'wks' directory in home
       ansible.builtin.file:
