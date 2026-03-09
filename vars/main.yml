@@ -78,6 +78,13 @@ fonts_packages:
   - fira-code-fonts
   - google-roboto-fonts
 
+# ASUS ROG Settings
+asus_copr_repo: "lukenukem/asus-linux"
+asus_packages:
+  - asusctl
+  - supergfxctl
+  - asusctl-rog-gui
+
 # Oh-My-Zsh settings
 omz_install_script_url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/main/omz-themes/kali-like-alt.zsh-theme"
