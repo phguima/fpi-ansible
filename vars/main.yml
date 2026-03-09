@@ -3,6 +3,9 @@
 dnf_max_parallel_downloads: 15
 dnf_fastestmirror: "True"
 
+# System Settings
+system_hostname: "argus"
+
 # GRUB Settings
 grub_timeout: 15
 grub_gfxmode: "1920x1080x32,1280x720x32,auto"

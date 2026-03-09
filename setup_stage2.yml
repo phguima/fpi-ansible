@@ -101,16 +101,16 @@
       ansible.builtin.dnf:
         name: "{{ nvidia_multimedia_packages }}"
         state: present
-      #when: 
-      #  - gpu_info.stdout | lower | regex_search('\bnvidia\b')
-      #  - nvidia_smi_check.rc == 0
+      when: 
+        - gpu_info.stdout | lower | regex_search('\bnvidia\b')
+        - nvidia_smi_check.rc == 0
       tags: [software, multimedia, nvidia]
 
     - name: Hardware | Install Intel Media Drivers
       ansible.builtin.dnf:
         name: "{{ intel_media_packages }}"
         state: present
-      #when: gpu_info.stdout | lower | regex_search('\bintel\b')
+      when: gpu_info.stdout | lower | regex_search('\bintel\b')
       tags: [hardware, intel]
 
     - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
@@ -118,7 +118,7 @@
         name: "{{ amd_multimedia_packages }}"
         state: present
         allowerasing: yes
-      #when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
+      when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
       tags: [hardware, amd]
 
     # --- ASUS ROG Configuration ---
@@ -412,3 +412,10 @@
       loop: "{{ flatpak_apps_kde }}"
       when: is_kde
       tags: [software, flatpak, kde]
+
+    # --- System Tweaks ---
+    - name: System | Set Hostname
+      ansible.builtin.hostname:
+        name: "{{ system_hostname }}"
+      tags: [system, hostname]
+      
