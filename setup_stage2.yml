@@ -52,6 +52,15 @@
       when: old_kernels_list.stdout_lines | length > 0
       tags: [system, kernel]
     
+    # --- User Discovery ---
+    - name: Shell | Get home directory of the primary user
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_env.SUDO_USER }}"
+      register: primary_user_data
+      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
+      tags: [shell, omz, hardware, asus]
+
     # --- Hardware & Drivers ---
     - name: Hardware | Detect ASUS System
       set_fact:
@@ -142,14 +151,6 @@
       ansible.builtin.dnf:
         name: [zsh, git, curl, fira-code-fonts]
         state: present
-      tags: [shell, omz]
-
-    - name: Shell | Get home directory of the primary user
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ ansible_env.SUDO_USER }}"
-      register: primary_user_data
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, omz]
 
     - name: Shell | Identify target users (Sudo User + Root)
@@ -305,6 +306,25 @@
         name: "{{ fonts_packages }}"
         state: present
       tags: [software, fonts]
+
+    # --- Workspace Setup ---
+    - name: Shell | Create 'wks' directory in home
+      ansible.builtin.file:
+        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/wks"
+        state: directory
+        owner: "{{ ansible_env.SUDO_USER }}"
+        group: "{{ ansible_env.SUDO_USER }}"
+        mode: '0755'
+      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
+      tags: [shell, workspace]
+
+    # --- GeminiCLI Installation ---
+    - name: Software | Install GeminiCLI globally
+      community.general.npm:
+        name: "@google/gemini-cli"
+        global: yes
+        state: present
+      tags: [software, gemini]
 
     # --- Flatpak Software Installation ---
     - name: Software | Install Common Flatpak Applications
