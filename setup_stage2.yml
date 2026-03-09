@@ -59,9 +59,9 @@
         key: "{{ ansible_env.SUDO_USER }}"
       register: primary_user_data
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
-      tags: [shell, omz, hardware, asus]
+      tags: [shell, omz, hardware, asus, setup]
 
-    # --- Hardware & Drivers ---
+    # --- Hardware Detection ---
     - name: Hardware | Detect ASUS System
       set_fact:
         is_asus: "{{ (ansible_system_vendor | default('') | lower is search('asus')) or (ansible_board_vendor | default('') | lower is search('asus')) }}"
@@ -74,11 +74,43 @@
       failed_when: false
       tags: [hardware]
 
+    - name: Hardware | Check for Proprietary NVIDIA Driver
+      ansible.builtin.command: nvidia-smi
+      register: nvidia_smi_check
+      changed_when: false
+      failed_when: false
+      tags: [hardware, detection, nvidia]
+
+    # --- Multimedia Codecs & FFmpeg Swap ---
+    - name: Software | Swap ffmpeg-free for full ffmpeg (RPM Fusion)
+      ansible.builtin.dnf:
+        name: ffmpeg
+        allowerasing: yes
+        state: present
+      tags: [software, multimedia, ffmpeg]
+
+    - name: Software | Install Multimedia Group and Codecs
+      ansible.builtin.dnf:
+        name: "{{ multimedia_packages }}"
+        state: present
+        update_cache: yes
+      tags: [software, multimedia]
+
+    # --- GPU Specific Hardware Acceleration ---
+    - name: Software | Install NVIDIA VA-API and NVENC/NVDEC Support
+      ansible.builtin.dnf:
+        name: "{{ nvidia_multimedia_packages }}"
+        state: present
+      #when: 
+      #  - gpu_info.stdout | lower | regex_search('\bnvidia\b')
+      #  - nvidia_smi_check.rc == 0
+      tags: [software, multimedia, nvidia]
+
     - name: Hardware | Install Intel Media Drivers
       ansible.builtin.dnf:
         name: "{{ intel_media_packages }}"
         state: present
-      when: gpu_info.stdout | lower | regex_search('\bintel\b')
+      #when: gpu_info.stdout | lower | regex_search('\bintel\b')
       tags: [hardware, intel]
 
     - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
@@ -86,9 +118,10 @@
         name: "{{ amd_multimedia_packages }}"
         state: present
         allowerasing: yes
-      when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
+      #when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
       tags: [hardware, amd]
 
+    # --- ASUS ROG Configuration ---
     - name: Hardware | Enable ASUS ROG Copr Repository
       community.general.copr:
         name: "{{ asus_copr_repo }}"
@@ -117,7 +150,6 @@
       when: is_asus
       tags: [hardware, asus]
 
-    # --- ASUS ROG Autostart ---
     - name: Hardware | Ensure Autostart Directory Exists
       ansible.builtin.file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/autostart"
@@ -236,16 +268,7 @@
         is_kde: "{{ 'KDE' in detected_xdg or 'PLASMA' in detected_xdg or 'KDE' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
       tags: [system, detection]
 
-    - name: System | Debug DE Detection
-      ansible.builtin.debug:
-        msg: 
-          - "XDG_CURRENT_DESKTOP (lookup): {{ detected_xdg }}"
-          - "XDG_CURRENT_DESKTOP (ansible_env): {{ ansible_env.XDG_CURRENT_DESKTOP | default('UNDEFINED') }}"
-          - "Is GNOME: {{ is_gnome }}"
-          - "Is KDE/Plasma: {{ is_kde }}"
-      tags: [system, detection, debug]
-    
-    # --- DNF Package Installation ---
+    # --- Software Installation ---
     - name: Software | Install Common DNF Packages
       ansible.builtin.dnf:
         name: "{{ dnf_packages_common }}"
@@ -266,7 +289,6 @@
       when: is_kde
       tags: [software, dnf, kde]
       
-    # --- VS Code Installation ---
     - name: Software | Add Visual Studio Code Repository
       ansible.builtin.yum_repository:
         name: code
@@ -283,7 +305,6 @@
         state: present
       tags: [software, vscode]
 
-    # --- Brave Browser Installation ---
     - name: Software | Add Brave Browser Repository
       ansible.builtin.yum_repository:
         name: brave-browser
@@ -300,14 +321,13 @@
         state: present
       tags: [software, brave]
 
-    # --- Font Installation ---
     - name: Software | Install Selected Fonts
       ansible.builtin.dnf:
         name: "{{ fonts_packages }}"
         state: present
       tags: [software, fonts]
 
-    # --- Workspace Setup ---
+    # --- Workspace and Specialized Tools ---
     - name: Shell | Create 'wks' directory in home
       ansible.builtin.file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/wks"
@@ -318,7 +338,6 @@
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, workspace]
 
-    # --- GeminiCLI Installation ---
     - name: Software | Install GeminiCLI globally
       community.general.npm:
         name: "@google/gemini-cli"
@@ -326,7 +345,7 @@
         state: present
       tags: [software, gemini]
 
-    # --- Flatpak Software Installation ---
+    # --- Flatpak Applications ---
     - name: Software | Install Common Flatpak Applications
       community.general.flatpak:
         name: "{{ item }}"
