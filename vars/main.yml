@@ -130,3 +130,13 @@ zsh_aliases: |
 # Konsole Settings
 konsole_profile_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/refs/heads/main/konsole/kali-like-alt.profile"
 konsole_scheme_url: "https://raw.githubusercontent.com/phguima/fedora_stuffs/refs/heads/main/konsole/kali-like-alt.colorscheme"
+
+# PTYxis Settings
+ptyxis_restore_window_size: "false"
+ptyxis_default_columns: 120
+ptyxis_default_rows: 35
+ptyxis_cursor_shape: "underline"
+ptyxis_cursor_blink_mode: "on"
+ptyxis_use_system_font: "false"
+ptyxis_font_name: "Fira Code 10"
+ptyxis_opacity: 0.95

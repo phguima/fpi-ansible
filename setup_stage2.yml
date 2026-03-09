@@ -458,3 +458,49 @@
         mode: '0644'
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
+
+    # --- GNOME Specific Configuration (PTYxis) ---
+    - name: Software | Set PTYxis terminal window size and behavior
+      community.general.gsettings:
+        schema: org.gnome.Ptyxis
+        key: "{{ item.key }}"
+        value: "{{ item.value }}"
+      become_user: "{{ ansible_env.SUDO_USER }}"
+      loop:
+        - { key: "restore-window-size", value: "{{ ptyxis_restore_window_size }}" }
+        - { key: "default-columns", value: "{{ ptyxis_default_columns }}" }
+        - { key: "default-rows", value: "{{ ptyxis_default_rows }}" }
+      when: is_gnome and ansible_env.SUDO_USER is defined
+      tags: [software, gnome, ptyxis]
+
+    - name: Software | Set PTYxis cursor and font settings
+      community.general.dconf:
+        key: "/org/gnome/Ptyxis/{{ item.key }}"
+        value: "{{ item.value }}"
+      become_user: "{{ ansible_env.SUDO_USER }}"
+      loop:
+        - { key: "cursor-shape", value: "'{{ ptyxis_cursor_shape }}'" }
+        - { key: "cursor-blink-mode", value: "'{{ ptyxis_cursor_blink_mode }}'" }
+        - { key: "use-system-font", value: "{{ ptyxis_use_system_font }}" }
+        - { key: "font-name", value: "'{{ ptyxis_font_name }}'" }
+      when: is_gnome and ansible_env.SUDO_USER is defined
+      tags: [software, gnome, ptyxis]
+
+    - name: Software | Get PTYxis default profile UUID
+      ansible.builtin.shell: dconf read /org/gnome/Ptyxis/default-profile-uuid | tr -d "'"
+      register: ptyxis_default_uuid
+      become_user: "{{ ansible_env.SUDO_USER }}"
+      changed_when: false
+      when: is_gnome and ansible_env.SUDO_USER is defined
+      tags: [software, gnome, ptyxis]
+
+    - name: Software | Set PTYxis transparency
+      community.general.dconf:
+        key: "/org/gnome/Ptyxis/Profiles/{{ ptyxis_default_uuid.stdout }}/opacity"
+        value: "{{ ptyxis_opacity }}"
+      become_user: "{{ ansible_env.SUDO_USER }}"
+      when: 
+        - is_gnome 
+        - ansible_env.SUDO_USER is defined 
+        - ptyxis_default_uuid.stdout != ""
+      tags: [software, gnome, ptyxis]
