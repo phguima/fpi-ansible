@@ -28,6 +28,7 @@
     - name: NVIDIA | Generate MOK key for signing
       ansible.builtin.command: kmodgenca -a
       when: not akmod_cert.stat.exists
+      register: kmodgen_task
       tags: [nvidia, cert]
 
     - name: NVIDIA | Check if key is already enrolled
@@ -35,21 +36,29 @@
       register: mok_test
       failed_when: false
       changed_when: false
+      # Ensure this runs after potentially creating the key
       tags: [nvidia, cert]
 
     - name: NVIDIA | Import MOK key
       ansible.builtin.pause:
         prompt: "Run 'sudo mokutil --import /etc/pki/akmods/certs/public_key.der' in another terminal to enter the password, then press Enter here to continue."
       when: mok_test.rc != 0
+      register: import_task
       tags: [nvidia, cert]
 
     - name: NVIDIA | Reboot for MOK enrollment
       ansible.builtin.reboot:
         msg: "Rebooting to enroll MOK key. Please select 'Enroll MOK' in the BIOS menu."
-      when: akmod_cert is changed or (mok_test.rc is defined and mok_test.rc != 0)
+      when: import_task is not skipped
       tags: [nvidia, reboot]
 
     # --- Driver Installation ---
+    - name: System | Upgrade all packages before driver installation
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      tags: [nvidia, system]
+
     - name: NVIDIA | Install proprietary driver packages
       ansible.builtin.dnf:
         name: "{{ nvidia_driver_packages }}"
