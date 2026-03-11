@@ -85,7 +85,8 @@
       tags: [hardware, asus]
 
     - name: Hardware | Detect GPU Type
-      ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
+      # -nn provides Vendor IDs (10de=Nvidia, 8086=Intel, 1002=AMD)
+      ansible.builtin.shell: lspci -nn | grep -iE "vga|3d|display"
       register: gpu_info
       changed_when: false
       failed_when: false
@@ -94,8 +95,9 @@
     - name: Hardware | Check for Proprietary NVIDIA Driver
       ansible.builtin.command: nvidia-smi
       register: nvidia_smi_check
+      # We don't want the playbook to stop if nvidia-smi isn't found yet
+      ignore_errors: yes 
       changed_when: false
-      failed_when: false
       tags: [hardware, detection, nvidia]
 
     # --- Multimedia Codecs & FFmpeg Swap ---
@@ -113,13 +115,13 @@
         update_cache: yes
       tags: [software, multimedia]
 
-    # --- GPU Specific Hardware Acceleration ---
+    # --- GPU Specific Hardware Acceleration ---      
     - name: Software | Install NVIDIA VA-API and NVENC/NVDEC Support
       ansible.builtin.dnf:
         name: "{{ nvidia_multimedia_packages }}"
         state: present
       when: 
-        - gpu_info.stdout | lower | regex_search('\bnvidia\b')
+        - gpu_info.stdout is search('NVIDIA', ignorecase=True)
         - nvidia_smi_check.rc == 0
       tags: [software, multimedia, nvidia]
 
@@ -127,7 +129,7 @@
       ansible.builtin.dnf:
         name: "{{ intel_media_packages }}"
         state: present
-      when: gpu_info.stdout | lower | regex_search('\bintel\b')
+      when: gpu_info.stdout is search('Intel', ignorecase=True)
       tags: [hardware, intel]
 
     - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
@@ -135,7 +137,10 @@
         name: "{{ amd_multimedia_packages }}"
         state: present
         allowerasing: yes
-      when: gpu_info.stdout | lower | regex_search('\b(amd|ati)\b')
+      when: >
+        gpu_info.stdout is search('AMD', ignorecase=True) or 
+        gpu_info.stdout is search('ATI', ignorecase=True) or 
+        gpu_info.stdout is search('Advanced Micro Devices', ignorecase=True)
       tags: [hardware, amd]
 
     # --- ASUS ROG Configuration ---
