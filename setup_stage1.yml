@@ -6,13 +6,13 @@
     - vars/main.yml
 
   tasks:
-    - name: Bootstrap | Install dnf-plugins-core
+    # --- Prerequired tasks ---
+    - name: DNF | Install dnf-plugins-core
       ansible.builtin.dnf:
         name: dnf-plugins-core
         state: present
-      tags: [system, bootstrap]
-
-    # --- User Discovery ---
+      tags: [system, dnf]
+    
     - name: Shell | Get home directory of the primary user
       ansible.builtin.getent:
         database: passwd
@@ -21,7 +21,14 @@
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, omz, hardware, asus, setup]
     
-    # --- DNF Configuration ---
+    - name: Shell | Get users information
+      ansible.builtin.debug:
+        msg: 
+          - "Current User ID (ansible_user_id): {{ ansible_user_id }}"
+          - "Sudo User (ansible_env.SUDO_USER): {{ ansible_env.SUDO_USER | default('None') }}"
+      tags: [shell, omz, debug]
+    
+    # --- DNF Configurations ---
     - name: System | Optimize DNF Configuration
       ansible.builtin.lineinfile:
         path: /etc/dnf/dnf.conf
@@ -32,7 +39,7 @@
         - { key: "fastestmirror", value: "{{ dnf_fastestmirror }}" }
       tags: [system, dnf]
     
-    - name: System | Add RPM Fusion Free repository
+    - name: System | Add RPM Fusion repositories
       ansible.builtin.dnf:
         name:
           - "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_distribution_major_version }}.noarch.rpm"
@@ -40,7 +47,8 @@
         state: present
         disable_gpg_check: yes
       tags: [system, rpmfusion]
-
+    
+    # --- System tasks
     - name: System | Upgrade all packages and refresh dnf cache
       ansible.builtin.dnf:
         name: "*"
@@ -50,20 +58,13 @@
       tags: [system, dnf]
       
     # --- Zsh and Oh-My-Zsh ---
-    - name: Shell | Debug User Information
-      ansible.builtin.debug:
-        msg: 
-          - "Current User ID (ansible_user_id): {{ ansible_user_id }}"
-          - "Sudo User (ansible_env.SUDO_USER): {{ ansible_env.SUDO_USER | default('None') }}"
-      tags: [shell, omz, debug]
-
-    - name: Shell | Install ZSH, Git, and Curl
+    - name: ZSH | Install ZSH, Git, and Curl
       ansible.builtin.dnf:
         name: [zsh, git, curl, fira-code-fonts]
         state: present
-      tags: [shell, omz]
+      tags: [shell, omz, zsh, dnf]
 
-    - name: Shell | Identify target users (Sudo User + Root)
+    - name: ZSH | Identify target users (Sudo User + Root)
       set_fact:
         zsh_users:
           - name: "root"
@@ -73,7 +74,7 @@
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, omz]
 
-    - name: Shell | Identify target users (Root only)
+    - name: ZSH | Identify target users (Root only)
       set_fact:
         zsh_users:
           - name: "root"
@@ -81,7 +82,7 @@
       when: ansible_env.SUDO_USER is not defined or ansible_env.SUDO_USER == 'root'
       tags: [shell, omz]
 
-    - name: Shell | Ensure Oh-My-Zsh is installed for users
+    - name: ZSH | Ensure Oh-My-Zsh is installed for users
       ansible.builtin.shell:
         cmd: "curl -fsSL {{ omz_install_script_url }} | sh -s -- --unattended --keep-zshrc"
         creates: "{{ item.home }}/.oh-my-zsh"
@@ -89,7 +90,7 @@
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
-    - name: Shell | Ensure .zshrc exists (copy template if missing)
+    - name: ZSH | Ensure .zshrc exists (copy template if missing)
       ansible.builtin.copy:
         src: "{{ item.home }}/.oh-my-zsh/templates/zshrc.zsh-template"
         dest: "{{ item.home }}/.zshrc"
@@ -100,14 +101,14 @@
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
-    - name: Shell | Change default shell to ZSH
+    - name: ZSH | Change default shell to ZSH
       ansible.builtin.user:
         name: "{{ item.name }}"
         shell: /bin/zsh
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
-    - name: Shell | Download custom theme for users
+    - name: ZSH | Download custom theme for users
       ansible.builtin.get_url:
         url: "{{ omz_theme_url }}"
         dest: "{{ item.home }}/.oh-my-zsh/themes/{{ omz_theme_name }}.zsh-theme"
@@ -116,7 +117,7 @@
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
-    - name: Shell | Set theme in .zshrc
+    - name: ZSH | Set theme in .zshrc
       ansible.builtin.lineinfile:
         path: "{{ item.home }}/.zshrc"
         regexp: '^ZSH_THEME='
@@ -125,7 +126,7 @@
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
-    - name: Shell | Add custom aliases to .zshrc
+    - name: ZSH | Add custom aliases to .zshrc
       ansible.builtin.blockinfile:
         path: "{{ item.home }}/.zshrc"
         marker: "# {mark} ANSIBLE MANAGED ALIASES"
@@ -133,6 +134,22 @@
         owner: "{{ item.name }}"
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
+
+    - name: ZSH | Add NVIDIA and API key placeholders to .zshrc
+      ansible.builtin.blockinfile:
+        path: "{{ item.home }}/.zshrc"
+        marker: "# {mark} NVIDIA AND API CONFIGURATION"
+        insertafter: '^# export MANPATH="/usr/local/man:\$MANPATH"'
+        block: |
+          # Finer-Grained Control of GLX + OpenGL
+          export __NV_PRIME_RENDER_OFFLOAD_PROVIDER=NVIDIA-G0
+          export __GLX_VENDOR_LIBRARY_NAME=nvidia
+
+          # API KEYS Configuration
+        owner: "{{ item.name }}"
+        mode: '0644'
+      loop: "{{ zsh_users }}"
+      tags: [shell, nvidia, setup]
 
     # --- GRUB Configuration ---
     - name: System | Configure GRUB settings

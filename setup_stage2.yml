@@ -6,7 +6,7 @@
     - vars/main.yml
 
   tasks:
-    # --- User Discovery ---
+    # --- Prerequired tasks ---
     - name: Shell | Get home directory of the primary user
       ansible.builtin.getent:
         database: passwd
@@ -14,14 +14,14 @@
       register: primary_user_data
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, omz, hardware, asus, setup]
-      
-    # --- System Tweaks ---
-    - name: System | Set Hostname
-      ansible.builtin.hostname:
-        name: "{{ system_hostname }}"
-      tags: [system, hostname]
-
-    # --- Workspace and Specialized Tools ---
+    
+    - name: System | Enable Flathub Repository
+      community.general.flatpak_remote:
+        name: flathub
+        state: present
+        flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+      tags: [system, flatpak]
+    
     - name: Shell | Create 'wks' directory in home
       ansible.builtin.file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/wks"
@@ -31,14 +31,85 @@
         mode: '0755'
       when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
       tags: [shell, workspace]
+    
+    # --- Hardware Detection ---
+    - name: Hardware | Detect ASUS system
+      set_fact:
+        is_asus: "{{ (ansible_system_vendor | default('') | lower is search('asus')) or (ansible_board_vendor | default('') | lower is search('asus')) }}"
+      tags: [hardware, asus]
 
-    # --- Flatpak Configuration ---
-    - name: System | Enable Flathub Repository
-      community.general.flatpak_remote:
-        name: flathub
+    - name: Hardware | Detect GPU Type
+      ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
+      register: gpu_info
+      changed_when: false
+      failed_when: false
+      tags: [hardware]
+
+    - name: Hardware | Check for proprietary NVIDIA driver
+      ansible.builtin.command: nvidia-smi
+      register: nvidia_smi_check
+      # We don't want the playbook to stop if nvidia-smi isn't found yet
+      ignore_errors: yes 
+      changed_when: false
+      tags: [hardware, detection, nvidia]
+    
+    # --- Desktop Environment Detection ---
+    - name: System | Detect desktop environment
+      set_fact:
+        detected_xdg: "{{ lookup('env', 'XDG_CURRENT_DESKTOP') | default('') | upper }}"
+      tags: [system, detection]
+
+    - name: System | Set DE Boolean Facts
+      set_fact:
+        is_gnome: "{{ 'GNOME' in detected_xdg }}"
+        is_kde: "{{ 'KDE' in detected_xdg or 'PLASMA' in detected_xdg or 'KDE' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
+      tags: [system, detection]
+    
+    # --- System Tweaks ---
+    - name: System | Set hostname
+      ansible.builtin.hostname:
+        name: "{{ system_hostname }}"
+      tags: [system, hostname]
+    
+    # --- GPU Specific Hardware Acceleration ---      
+    - name: Hardware | Install NVIDIA VA-API and NVENC/NVDEC support
+      ansible.builtin.dnf:
+        name: "{{ nvidia_multimedia_packages }}"
         state: present
-        flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
-      tags: [system, flatpak]
+      when: 
+        - gpu_info.stdout is search('NVIDIA', ignorecase=True)
+        - nvidia_smi_check.rc == 0
+      tags: [software, multimedia, nvidia]
+
+    - name: Hardware | Install intel media drivers
+      ansible.builtin.dnf:
+        name: "{{ intel_media_packages }}"
+        state: present
+      when: gpu_info.stdout is search('Intel', ignorecase=True)
+      tags: [hardware, intel]
+
+    - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
+      ansible.builtin.dnf:
+        name: "{{ amd_multimedia_packages }}"
+        state: present
+        allowerasing: true
+      when: gpu_info.stdout | lower | regex_search('\b(amd|ati|Advanced Micro Devices)\b')
+      tags: [hardware, amd]
+    
+    # --- Multimedia Codecs & FFmpeg Swap ---
+    - name: Codecs | Swap ffmpeg-free for full ffmpeg (RPM Fusion)
+      ansible.builtin.dnf:
+        name: ffmpeg
+        allowerasing: yes
+        state: present
+      tags: [software, multimedia, ffmpeg]
+
+    - name: Codecs | Install Multimedia Group and Codecs
+      ansible.builtin.dnf:
+        name: "{{ multimedia_packages }}"
+        state: present
+        update_cache: yes
+      tags: [software, multimedia]
     
     # --- Kernel Maintenance ---
     - name: Kernel | Prevent removal of debug packages if running debug kernel
@@ -77,90 +148,36 @@
         state: absent
       when: old_kernels_list.stdout_lines | length > 0
       tags: [system, kernel]
-
-    # --- Hardware Detection ---
-    - name: Hardware | Detect ASUS System
-      set_fact:
-        is_asus: "{{ (ansible_system_vendor | default('') | lower is search('asus')) or (ansible_board_vendor | default('') | lower is search('asus')) }}"
-      tags: [hardware, asus]
-
-    - name: Hardware | Detect GPU Type
-      ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
-      register: gpu_info
-      changed_when: false
-      failed_when: false
-      tags: [hardware]
-
-    - name: Hardware | Check for Proprietary NVIDIA Driver
-      ansible.builtin.command: nvidia-smi
-      register: nvidia_smi_check
-      # We don't want the playbook to stop if nvidia-smi isn't found yet
-      ignore_errors: yes 
-      changed_when: false
-      tags: [hardware, detection, nvidia]
-
-    # --- Multimedia Codecs & FFmpeg Swap ---
-    - name: Software | Swap ffmpeg-free for full ffmpeg (RPM Fusion)
+    
+    # --- Fonts Installation ---
+    - name: Software | Install Selected Fonts
       ansible.builtin.dnf:
-        name: ffmpeg
-        allowerasing: yes
+        name: "{{ fonts_packages }}"
         state: present
-      tags: [software, multimedia, ffmpeg]
-
-    - name: Software | Install Multimedia Group and Codecs
-      ansible.builtin.dnf:
-        name: "{{ multimedia_packages }}"
-        state: present
-        update_cache: yes
-      tags: [software, multimedia]
-
-    # --- GPU Specific Hardware Acceleration ---      
-    - name: Software | Install NVIDIA VA-API and NVENC/NVDEC Support
-      ansible.builtin.dnf:
-        name: "{{ nvidia_multimedia_packages }}"
-        state: present
-      when: 
-        - gpu_info.stdout is search('NVIDIA', ignorecase=True)
-        - nvidia_smi_check.rc == 0
-      tags: [software, multimedia, nvidia]
-
-    - name: Hardware | Install Intel Media Drivers
-      ansible.builtin.dnf:
-        name: "{{ intel_media_packages }}"
-        state: present
-      when: gpu_info.stdout is search('Intel', ignorecase=True)
-      tags: [hardware, intel]
-
-    - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
-      ansible.builtin.dnf:
-        name: "{{ amd_multimedia_packages }}"
-        state: present
-        allowerasing: true
-      when: gpu_info.stdout | lower | regex_search('\b(amd|ati|Advanced Micro Devices)\b')
-      tags: [hardware, amd]
-
-    # --- ASUS ROG Configuration ---
-    - name: Hardware | Enable ASUS ROG Copr Repository
+      tags: [software, fonts]
+    
+    # --- ASUS ROG Installation ---
+    - name: ASUS | Enable ROG copr repository
       community.general.copr:
         name: "{{ asus_copr_repo }}"
         state: enabled
       when: is_asus
       tags: [hardware, asus]
 
-    - name: Hardware | Refresh DNF Cache for COPR
+    - name: ASUS | Refresh DNF cache for copr
       ansible.builtin.dnf:
         update_cache: yes
       when: is_asus
       tags: [hardware, asus]
 
-    - name: Hardware | Install ASUS ROG Packages
+    - name: ASUS | Install ASUS ROG packages
       ansible.builtin.dnf:
         name: "{{ asus_packages }}"
         state: present
       when: is_asus
       tags: [hardware, asus]
 
-    - name: Hardware | Enable and Start supergfxd.service
+    - name: ASUS | Enable and start supergfxd.service
       ansible.builtin.systemd:
         name: supergfxd.service
         enabled: yes
@@ -168,7 +185,7 @@
       when: is_asus
       tags: [hardware, asus]
 
-    - name: Hardware | Ensure Autostart Directory Exists
+    - name: ASUS | Ensure autostart directory exists
       ansible.builtin.file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/autostart"
         state: directory
@@ -178,7 +195,7 @@
       when: is_asus and ansible_env.SUDO_USER is defined
       tags: [hardware, asus]
 
-    - name: Hardware | Add ASUS ROG GUI to Autostart
+    - name: ASUS | Add ASUS ROG GUI to autostart
       ansible.builtin.copy:
         src: "/usr/share/applications/rog-control-center.desktop"
         dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/autostart/rog-control-center.desktop"
@@ -189,56 +206,29 @@
       when: is_asus and ansible_env.SUDO_USER is defined
       tags: [hardware, asus]
     
-    # --- Desktop Environment Detection ---
-    - name: System | Detect Desktop Environment
-      set_fact:
-        detected_xdg: "{{ lookup('env', 'XDG_CURRENT_DESKTOP') | default('') | upper }}"
-      tags: [system, detection]
-
-    - name: System | Set DE Boolean Facts
-      set_fact:
-        is_gnome: "{{ 'GNOME' in detected_xdg }}"
-        is_kde: "{{ 'KDE' in detected_xdg or 'PLASMA' in detected_xdg or 'KDE' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
-      tags: [system, detection]
-
     # --- Software Installation ---
-    - name: Software | Install Common DNF Packages
-      ansible.builtin.dnf:
-        name: "{{ dnf_packages_common }}"
-        state: present
-      tags: [software, dnf, common]
-
-    - name: Software | Install GNOME Specific DNF Packages
-      ansible.builtin.dnf:
-        name: "{{ dnf_packages_gnome }}"
-        state: present
-      when: is_gnome
-      tags: [software, dnf, gnome]
-
-    - name: Software | Install KDE Specific DNF Packages
+    - name: Software | Install KDE specific DNF packages
       ansible.builtin.dnf:
         name: "{{ dnf_packages_kde }}"
         state: present
       when: is_kde
       tags: [software, dnf, kde]
-      
-    - name: Software | Add Visual Studio Code Repository
-      ansible.builtin.yum_repository:
-        name: code
-        description: Visual Studio Code
-        baseurl: "{{ vscode_repo_url }}"
-        enabled: yes
-        gpgcheck: yes
-        gpgkey: "{{ vscode_gpg_key }}"
-      tags: [software, vscode]
-
-    - name: Software | Install Visual Studio Code
+    
+    - name: Software | Install GNOME specific DNF packages
       ansible.builtin.dnf:
-        name: code
+        name: "{{ dnf_packages_gnome }}"
         state: present
-      tags: [software, vscode]
-
-    - name: Software | Add Brave Browser Repository
+      when: is_gnome
+      tags: [software, dnf, gnome]
+    
+    - name: Software | Install DNF packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages_common }}"
+        state: present
+      tags: [software, dnf, common]
+    
+    # --- Brave Installation ---
+    - name: Brave | Add Brave repository
       ansible.builtin.yum_repository:
         name: brave-browser
         description: Brave Browser
@@ -248,59 +238,30 @@
         gpgkey: "{{ brave_gpg_key }}"
       tags: [software, brave]
 
-    - name: Software | Install Brave Browser
+    - name: Brave | Install Brave
       ansible.builtin.dnf:
         name: brave-browser
         state: present
       tags: [software, brave]
+    
+    # --- Visual Studio Code Installation ---
+    - name: VSCode | Add Visual Studio Code repository
+      ansible.builtin.yum_repository:
+        name: code
+        description: Visual Studio Code
+        baseurl: "{{ vscode_repo_url }}"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: "{{ vscode_gpg_key }}"
+      tags: [software, vscode]
 
-    # --- Font Installation ---
-    - name: Software | Install Selected Fonts
+    - name: VSCode | Install Visual Studio Code
       ansible.builtin.dnf:
-        name: "{{ fonts_packages }}"
+        name: code
         state: present
-      tags: [software, fonts]
-
-    # --- ProtonVPN Installation ---
-    - name: Software | Install ProtonVPN Repository
-      ansible.builtin.dnf:
-        name: "{{ protonvpn_repo_url }}"
-        state: present
-        disable_gpg_check: yes
-      tags: [software, protonvpn]
-
-    - name: Software | Refresh DNF cache for ProtonVPN
-      ansible.builtin.command: dnf makecache --refresh
-      changed_when: false
-      tags: [software, protonvpn]
-
-    - name: Software | Install ProtonVPN Dependencies
-      ansible.builtin.dnf:
-        name: python3-pip
-        state: present
-      tags: [software, protonvpn]
-
-    - name: Software | Install ProtonVPN Application
-      ansible.builtin.dnf:
-        name: proton-vpn-gnome-desktop
-        state: present
-      register: protonvpn_install
-      ignore_errors: yes
-      tags: [software, protonvpn]
-
-    - name: Software | Verify ProtonVPN Installation
-      ansible.builtin.command: rpm -q proton-vpn-gnome-desktop
-      changed_when: false
-      failed_when: false
-      register: protonvpn_check
-      tags: [software, protonvpn]
-
-    - name: Software | Report ProtonVPN Status
-      ansible.builtin.debug:
-        msg: "ProtonVPN was installed successfully (despite potential scriptlet warnings)."
-      when: protonvpn_check.rc == 0
-      tags: [software, protonvpn]
-
+      tags: [software, vscode]
+    
+    # --- GeminiCLI Installation ---
     - name: Software | Install GeminiCLI globally
       community.general.npm:
         name: "@google/gemini-cli"
@@ -308,25 +269,48 @@
         state: present
       tags: [software, gemini]
 
+     # --- ProtonVPN Installation ---
+    - name: ProtonVPN | Install ProtonVPN repository
+      ansible.builtin.dnf:
+        name: "{{ protonvpn_repo_url }}"
+        state: present
+        disable_gpg_check: yes
+      tags: [software, protonvpn]
+
+    - name: ProtonVPN | Refresh DNF cache for ProtonVPN
+      ansible.builtin.command: dnf makecache --refresh
+      changed_when: false
+      tags: [software, protonvpn]
+
+    - name: ProtonVPN | Install ProtonVPN dependencies
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+      tags: [software, protonvpn]
+
+    - name: ProtonVPN | Install ProtonVPN application
+      ansible.builtin.dnf:
+        name: proton-vpn-gnome-desktop
+        state: present
+      register: protonvpn_install
+      ignore_errors: yes
+      tags: [software, protonvpn]
+
+    - name: ProtonVPN | Verify ProtonVPN installation
+      ansible.builtin.command: rpm -q proton-vpn-gnome-desktop
+      changed_when: false
+      failed_when: false
+      register: protonvpn_check
+      tags: [software, protonvpn]
+
+    - name: ProtonVPN | Report ProtonVPN status
+      ansible.builtin.debug:
+        msg: "ProtonVPN was installed successfully (despite potential scriptlet warnings)."
+      when: protonvpn_check.rc == 0
+      tags: [software, protonvpn]
+    
     # --- Flatpak Applications ---
-    - name: Software | Install Common Flatpak Applications
-      community.general.flatpak:
-        name: "{{ item }}"
-        state: present
-        remote: flathub
-      loop: "{{ flatpak_apps_common }}"
-      tags: [software, flatpak, common]
-
-    - name: Software | Install GNOME Specific Flatpak Applications
-      community.general.flatpak:
-        name: "{{ item }}"
-        state: present
-        remote: flathub
-      loop: "{{ flatpak_apps_gnome }}"
-      when: is_gnome
-      tags: [software, flatpak, gnome]
-
-    - name: Software | Install KDE Specific Flatpak Applications
+    - name: Software | Install KDE specific flatpak applications
       community.general.flatpak:
         name: "{{ item }}"
         state: present
@@ -335,8 +319,25 @@
       when: is_kde
       tags: [software, flatpak, kde]
 
+    - name: Software | Install GNOME specific flatpak applications
+      community.general.flatpak:
+        name: "{{ item }}"
+        state: present
+        remote: flathub
+      loop: "{{ flatpak_apps_gnome }}"
+      when: is_gnome
+      tags: [software, flatpak, gnome]
+
+    - name: Software | Install flatpak applications
+      community.general.flatpak:
+        name: "{{ item }}"
+        state: present
+        remote: flathub
+      loop: "{{ flatpak_apps_common }}"
+      tags: [software, flatpak, common]
+
     # --- KDE Specific Configuration ---
-    - name: Software | Ensure Konsole directory exists
+    - name: KDE | Ensure konsole directory exists
       ansible.builtin.file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole"
         state: directory
@@ -346,7 +347,7 @@
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
 
-    - name: Software | Download Konsole profile
+    - name: KDE | Download konsole profile
       ansible.builtin.get_url:
         url: "{{ konsole_profile_url }}"
         dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole/kali-like-alt.profile"
@@ -355,7 +356,7 @@
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
 
-    - name: Software | Download Konsole color scheme
+    - name: KDE | Download konsole color scheme
       ansible.builtin.get_url:
         url: "{{ konsole_scheme_url }}"
         dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole/kali-like-alt.colorscheme"
@@ -364,17 +365,30 @@
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
 
-    - name: Software | Disable Konsole 'Remember window size'
-      ansible.builtin.lineinfile:
+    - name: KDE | Disable konsole 'Remember window size'
+      community.general.ini_file:
         path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/konsolerc"
-        regexp: '^RememberWindowSize='
-        line: 'RememberWindowSize=false'
-        insertafter: '\[KonsoleWindow\]'
+        section: "KonsoleWindow"
+        option: RememberWindowSize
+        value: "false"
+        owner: "{{ ansible_env.SUDO_USER }}"
+        mode: '0644'
+      when: is_kde and ansible_env.SUDO_USER is defined
+      tags: [software, kde, konsole]
+
+    - name: KDE | Set default konsole profile
+      community.general.ini_file:
+        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/konsolerc"
+        section: "Desktop Entry"
+        option: DefaultProfile
+        value: "kali-like-alt.profile"
+        owner: "{{ ansible_env.SUDO_USER }}"
+        mode: '0644'
       when: is_kde and ansible_env.SUDO_USER is defined
       tags: [software, kde, konsole]
 
     # --- GNOME Specific Configuration (PTYxis) ---
-    - name: Software | Set PTYxis terminal window size and behavior
+    - name: GNOME | Set PTYxis terminal window size and behavior
       ansible.builtin.command: "gsettings set org.gnome.Ptyxis {{ item.key }} {{ item.value }}"
       become_user: "{{ ansible_env.SUDO_USER }}"
       loop:
@@ -384,7 +398,7 @@
       when: is_gnome and ansible_env.SUDO_USER is defined
       tags: [software, gnome, ptyxis]
 
-    - name: Software | Set PTYxis cursor and font settings
+    - name: GNOME | Set PTYxis cursor and font settings
       ansible.builtin.command: "dconf write /org/gnome/Ptyxis/{{ item.key }} \"{{ item.value }}\""
       become_user: "{{ ansible_env.SUDO_USER }}"
       loop:
@@ -395,7 +409,7 @@
       when: is_gnome and ansible_env.SUDO_USER is defined
       tags: [software, gnome, ptyxis]
 
-    - name: Software | Get PTYxis default profile UUID
+    - name: GNOME | Get PTYxis default profile UUID
       ansible.builtin.shell: dconf read /org/gnome/Ptyxis/default-profile-uuid | tr -d "'"
       register: ptyxis_default_uuid
       become_user: "{{ ansible_env.SUDO_USER }}"
@@ -403,7 +417,7 @@
       when: is_gnome and ansible_env.SUDO_USER is defined
       tags: [software, gnome, ptyxis]
 
-    - name: Software | Set PTYxis transparency
+    - name: GNOME | Set PTYxis transparency
       ansible.builtin.command: "dconf write /org/gnome/Ptyxis/Profiles/{{ ptyxis_default_uuid.stdout }}/opacity {{ ptyxis_opacity }}"
       become_user: "{{ ansible_env.SUDO_USER }}"
       when: 
@@ -411,3 +425,12 @@
         - ansible_env.SUDO_USER is defined 
         - ptyxis_default_uuid.stdout != ""
       tags: [software, gnome, ptyxis]
+
+    # --- Python Libraries ---
+    - name: Python | Install markitdown globally
+      ansible.builtin.pip:
+        name: markitdown
+        state: present
+        executable: pip3
+      become: yes
+      tags: [software, python, markitdown]
