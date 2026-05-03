@@ -4,21 +4,17 @@
   become: yes
   vars_files:
     - vars/main.yml
+    - vars/secrets.yml
 
   tasks:
-    # --- Prerequired tasks ---
-    - name: Shell | Get home directory of the primary user
-      ansible.builtin.getent:
-        database: passwd                          
-        key: "{{ ansible_env.SUDO_USER }}"
-      register: primary_user_data
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
-      tags: [shell, setup]
+    - name: Import environment setup tasks
+      ansible.builtin.import_tasks: tasks/env_setup.yml
+      tags: [always]
 
     - name: Software | Install GeminiCLI extensions for primary user
       ansible.builtin.command:
         cmd: "gemini extensions install --consent {{ item.url }}"
-      become_user: "{{ ansible_env.SUDO_USER }}"
+      become_user: "{{ user_name }}"
       loop:
         - { name: 'chrome-devtools', url: 'https://github.com/ChromeDevTools/chrome-devtools-mcp' }
         - { name: 'code-review', url: 'https://github.com/gemini-cli-extensions/code-review' }
@@ -38,5 +34,6 @@
         - "'already installed' not in extension_install.stdout"
         - "'already installed' not in extension_install.stderr"
       # Guard to ensure we only run for a real user context
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
+      when: user_name != 'root'
       tags: [gemini, extensions]
+

@@ -1,0 +1,14 @@
+---
+# Master Orchestration Playbook for Fedora Post-Install
+
+- name: Import Stage 1 - Initial Configuration
+  ansible.builtin.import_playbook: stage1.yml
+  tags: [stage1, initial]
+
+- name: Import Stage 2 - Software and Drivers
+  ansible.builtin.import_playbook: stage2.yml
+  tags: [stage2, software]
+
+- name: Import Stage 3 - GeminiCLI Extensions
+  ansible.builtin.import_playbook: stage3.yml
+  tags: [stage3, gemini]

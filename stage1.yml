@@ -4,8 +4,13 @@
   become: yes
   vars_files:
     - vars/main.yml
+    - vars/secrets.yml
 
   tasks:
+    - name: Import environment setup tasks
+      ansible.builtin.import_tasks: tasks/env_setup.yml
+      tags: [always]
+
     # --- Prerequired tasks ---
     - name: DNF | Install dnf-plugins-core
       ansible.builtin.dnf:
@@ -13,22 +18,8 @@
         state: present
       tags: [system, dnf]
     
-    - name: Shell | Get home directory of the primary user
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ ansible_env.SUDO_USER }}"
-      register: primary_user_data
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
-      tags: [shell, omz, hardware, asus, setup]
-    
-    - name: Shell | Get users information
-      ansible.builtin.debug:
-        msg: 
-          - "Current User ID (ansible_user_id): {{ ansible_user_id }}"
-          - "Sudo User (ansible_env.SUDO_USER): {{ ansible_env.SUDO_USER | default('None') }}"
-      tags: [shell, omz, debug]
-    
     # --- DNF Configurations ---
+
     - name: System | Optimize DNF Configuration
       ansible.builtin.lineinfile:
         path: /etc/dnf/dnf.conf
@@ -64,25 +55,8 @@
         state: present
       tags: [shell, omz, zsh, dnf]
 
-    - name: ZSH | Identify target users (Sudo User + Root)
-      set_fact:
-        zsh_users:
-          - name: "root"
-            home: "/root"
-          - name: "{{ ansible_env.SUDO_USER }}"
-            home: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}"
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
-      tags: [shell, omz]
-
-    - name: ZSH | Identify target users (Root only)
-      set_fact:
-        zsh_users:
-          - name: "root"
-            home: "/root"
-      when: ansible_env.SUDO_USER is not defined or ansible_env.SUDO_USER == 'root'
-      tags: [shell, omz]
-
     - name: ZSH | Ensure Oh-My-Zsh is installed for users
+
       ansible.builtin.shell:
         cmd: "curl -fsSL {{ omz_install_script_url }} | sh -s -- --unattended --keep-zshrc"
         creates: "{{ item.home }}/.oh-my-zsh"
@@ -126,6 +100,23 @@
       loop: "{{ zsh_users }}"
       tags: [shell, omz]
 
+    - name: ZSH | Download custom plugins for users
+      ansible.builtin.git:
+        repo: "{{ item.1.repo }}"
+        dest: "{{ item.0.home }}/.oh-my-zsh/custom/plugins/{{ item.1.name }}"
+      become_user: "{{ item.0.name }}"
+      loop: "{{ zsh_users | product(omz_custom_plugins) | list }}"
+      tags: [shell, omz]
+
+    - name: ZSH | Set plugins in .zshrc
+      ansible.builtin.lineinfile:
+        path: "{{ item.home }}/.zshrc"
+        regexp: '^plugins=\('
+        line: 'plugins=({{ omz_plugins | join(" ") }})'
+        owner: "{{ item.name }}"
+      loop: "{{ zsh_users }}"
+      tags: [shell, omz]
+
     - name: ZSH | Add custom aliases to .zshrc
       ansible.builtin.blockinfile:
         path: "{{ item.home }}/.zshrc"
@@ -147,6 +138,7 @@
           #export __NV_PRIME_RENDER_OFFLOAD=1
 
           # API KEYS Configuration
+          {{ api_keys }}
         owner: "{{ item.name }}"
         mode: '0644'
       loop: "{{ zsh_users }}"
@@ -170,3 +162,4 @@
   handlers:
     - name: Regenerate GRUB
       ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
+/grub2/grub.cfg

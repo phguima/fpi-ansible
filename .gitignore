@@ -1,0 +1,9 @@
+*.retry
+*.pyc
+*.pyo
+__pycache__/
+.ansible/
+.venv/
+vault_pass.txt
+.vault_pass
+secrets.yml.decrypted

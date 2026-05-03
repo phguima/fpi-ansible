@@ -4,17 +4,13 @@
   become: yes
   vars_files:
     - vars/main.yml
+    - vars/secrets.yml
 
   tasks:
-    # --- Prerequired tasks ---
-    - name: Shell | Get home directory of the primary user
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ ansible_env.SUDO_USER }}"
-      register: primary_user_data
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
-      tags: [shell, omz, hardware, asus, setup]
-    
+    - name: Import environment setup tasks
+      ansible.builtin.import_tasks: tasks/env_setup.yml
+      tags: [always]
+
     - name: System | Enable Flathub Repository
       community.general.flatpak_remote:
         name: flathub
@@ -24,46 +20,13 @@
     
     - name: Shell | Create 'wks' directory in home
       ansible.builtin.file:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/wks"
+        path: "{{ user_home }}/wks"
         state: directory
-        owner: "{{ ansible_env.SUDO_USER }}"
-        group: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
         mode: '0755'
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
+      when: user_name != 'root'
       tags: [shell, workspace]
-    
-    # --- Hardware Detection ---
-    - name: Hardware | Detect ASUS system
-      set_fact:
-        is_asus: "{{ (ansible_system_vendor | default('') | lower is search('asus')) or (ansible_board_vendor | default('') | lower is search('asus')) }}"
-      tags: [hardware, asus]
-
-    - name: Hardware | Detect GPU Type
-      ansible.builtin.shell: lspci | grep -iE "vga|3d|display"
-      register: gpu_info
-      changed_when: false
-      failed_when: false
-      tags: [hardware]
-
-    - name: Hardware | Check for proprietary NVIDIA driver
-      ansible.builtin.command: nvidia-smi
-      register: nvidia_smi_check
-      # We don't want the playbook to stop if nvidia-smi isn't found yet
-      ignore_errors: yes 
-      changed_when: false
-      tags: [hardware, detection, nvidia]
-    
-    # --- Desktop Environment Detection ---
-    - name: System | Detect desktop environment
-      set_fact:
-        detected_xdg: "{{ lookup('env', 'XDG_CURRENT_DESKTOP') | default('') | upper }}"
-      tags: [system, detection]
-
-    - name: System | Set DE Boolean Facts
-      set_fact:
-        is_gnome: "{{ 'GNOME' in detected_xdg }}"
-        is_kde: "{{ 'KDE' in detected_xdg or 'PLASMA' in detected_xdg or 'KDE' in (ansible_env.XDG_CURRENT_DESKTOP | default('') | upper) }}"
-      tags: [system, detection]
     
     # --- System Tweaks ---
     - name: System | Set hostname
@@ -71,21 +34,24 @@
         name: "{{ system_hostname }}"
       tags: [system, hostname]
     
+    # --- NVIDIA Driver Installation ---
+    - name: Hardware | NVIDIA Proprietary Driver
+      ansible.builtin.import_tasks: tasks/nvidia_driver.yml
+      tags: [hardware, nvidia, driver]
+
     # --- GPU Specific Hardware Acceleration ---      
     - name: Hardware | Install NVIDIA VA-API and NVENC/NVDEC support
       ansible.builtin.dnf:
         name: "{{ nvidia_multimedia_packages }}"
         state: present
-      when: 
-        - gpu_info.stdout is search('NVIDIA', ignorecase=True)
-        - nvidia_smi_check.rc == 0
+      when: is_nvidia and has_nvidia_driver
       tags: [software, multimedia, nvidia]
 
     - name: Hardware | Install intel media drivers
       ansible.builtin.dnf:
         name: "{{ intel_media_packages }}"
         state: present
-      when: gpu_info.stdout is search('Intel', ignorecase=True)
+      when: is_intel
       tags: [hardware, intel]
 
     - name: Hardware | Install AMD VA-API and VDPAU (Freeworld)
@@ -93,7 +59,7 @@
         name: "{{ amd_multimedia_packages }}"
         state: present
         allowerasing: true
-      when: gpu_info.stdout | lower | regex_search('\b(amd|ati|Advanced Micro Devices)\b')
+      when: is_amd
       tags: [hardware, amd]
     
     # --- Multimedia Codecs & FFmpeg Swap ---
@@ -125,48 +91,44 @@
         owner: root
         group: root
         mode: '0644'
-      when: 
-        - gpu_info.stdout is search('NVIDIA', ignorecase=True)
-        - nvidia_smi_check.rc == 0
+      when: is_nvidia and has_nvidia_driver
       tags: [hardware, nvidia, power]
+
     
     # --- Kernel Maintenance ---
-    - name: Kernel | Prevent removal of debug packages if running debug kernel
-      ansible.builtin.fail:
-        msg: "You are currently running a DEBUG kernel ({{ ansible_kernel }}). Please boot into a normal kernel before proceeding."
-      when: "'debug' in ansible_kernel"
-      tags: [system, kernel]
-
-    - name: Kernel | Get list of installed debug kernels
-      ansible.builtin.shell: dnf repoquery --installed "kernel*debug*" -q
-      register: installed_debug_kernels
-      changed_when: false
+    - name: Kernel | Ensure not running a debug kernel
+      ansible.builtin.assert:
+        that: "'debug' not in ansible_kernel"
+        fail_msg: "You are currently running a DEBUG kernel ({{ ansible_kernel }}). Please boot into a normal kernel before proceeding."
       tags: [system, kernel]
 
     - name: Kernel | Remove kernel debug packages
       ansible.builtin.dnf:
-        name: "{{ installed_debug_kernels.stdout_lines }}"
+        name: "kernel*debug*"
         state: absent
-      when: installed_debug_kernels.stdout_lines | length > 0
       tags: [system, kernel]
 
     - name: Kernel | Disable debug repositories
       ansible.builtin.shell: dnf config-manager setopt "*debug*".enabled=0
-      changed_when: false
+      changed_when: false # config-manager always reports success, we'll assume it's fine
       tags: [system, kernel]
 
     - name: Kernel | Get list of old kernels
       ansible.builtin.shell: dnf repoquery --installonly --latest-limit=-1 -q
       register: old_kernels_list
       changed_when: false
+      failed_when: false
       tags: [system, kernel]
 
     - name: Kernel | Remove old kernels
       ansible.builtin.dnf:
         name: "{{ old_kernels_list.stdout_lines }}"
         state: absent
-      when: old_kernels_list.stdout_lines | length > 0
+      when: 
+        - old_kernels_list.stdout_lines is defined
+        - old_kernels_list.stdout_lines | length > 0
       tags: [system, kernel]
+
     
     # --- Fonts Installation ---
     - name: Software | Install Selected Fonts
@@ -206,23 +168,23 @@
 
     - name: ASUS | Ensure autostart directory exists
       ansible.builtin.file:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/autostart"
+        path: "{{ user_home }}/.config/autostart"
         state: directory
-        owner: "{{ ansible_env.SUDO_USER }}"
-        group: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
         mode: '0755'
-      when: is_asus and ansible_env.SUDO_USER is defined
+      when: is_asus and user_name != 'root'
       tags: [hardware, asus]
 
     - name: ASUS | Add ASUS ROG GUI to autostart
       ansible.builtin.copy:
         src: "/usr/share/applications/rog-control-center.desktop"
-        dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/autostart/rog-control-center.desktop"
+        dest: "{{ user_home }}/.config/autostart/rog-control-center.desktop"
         remote_src: yes
-        owner: "{{ ansible_env.SUDO_USER }}"
-        group: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
         mode: '0644'
-      when: is_asus and ansible_env.SUDO_USER is defined
+      when: is_asus and user_name != 'root'
       tags: [hardware, asus]
     
     # --- Software Installation ---
@@ -356,11 +318,11 @@
       tags: [software, flatpak, common]
     
     # --- Cedilla Configuration ---
-    - name: Cedilla | Set user facts
+    - name: Cedilla | Set target user facts
       set_fact:
-        user_name: "{{ ansible_env.SUDO_USER }}"
-        user_home: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}"
-      when: ansible_env.SUDO_USER is defined and ansible_env.SUDO_USER != 'root'
+        target_user_name: "{{ user_name }}"
+        target_user_home: "{{ user_home }}"
+      when: user_name != 'root'
       tags: [always]
     
     - name: Cedilla | Find system compose file
@@ -372,42 +334,36 @@
       changed_when: false
       tags: [system, cedilla]
 
-    - name: Cedilla | Apply fix to .XCompose
-      ansible.builtin.shell: |
-        SYSTEM_COMPOSE="/usr/share/X11/locale/{{ system_compose_name.stdout }}"
-        USER_COMPOSE="{{ user_home }}/.XCompose"
-        
-        # Check if the file already contains cedilla-c instead of accented-c
-        if [ -f "$USER_COMPOSE" ] && grep -q $'\xc3\xa7' "$USER_COMPOSE"; then
-          exit 0
-        fi
-
-        if [ ! -s "$SYSTEM_COMPOSE" ]; then
-          echo "Error: System compose file not found."
-          exit 1
-        fi
-
-        if [ -s "$USER_COMPOSE" ] && [ ! -f "$USER_COMPOSE.ORIGINAL" ]; then
-          cp -f "$USER_COMPOSE" "$USER_COMPOSE.ORIGINAL"
-        fi
-
-        sed -e 's/\xc4\x87/\xc3\xa7/g' -e 's/\xc4\x86/\xc3\x87/g' <"$SYSTEM_COMPOSE" >"$USER_COMPOSE"
-        chown {{ user_name }}:{{ user_name }} "$USER_COMPOSE"
-        chmod 0644 "$USER_COMPOSE"
-        echo "XCOMPOSE_CHANGED"
-      register: xcompose_result
-      changed_when: "'XCOMPOSE_CHANGED' in xcompose_result.stdout"
+    - name: Cedilla | Ensure .XCompose exists (copy from system)
+      ansible.builtin.copy:
+        src: "/usr/share/X11/locale/{{ system_compose_name.stdout }}"
+        dest: "{{ target_user_home }}/.XCompose"
+        remote_src: yes
+        owner: "{{ target_user_name }}"
+        group: "{{ target_user_name }}"
+        mode: '0644'
+        force: no # Keep existing file if present
       when: 
         - system_compose_name.stdout != ""
-        - user_home is defined
-      args:
-        executable: /bin/bash
+        - target_user_home is defined
       tags: [system, cedilla]
+
+    - name: Cedilla | Apply character mapping for cedilla (ç)
+      ansible.builtin.replace:
+        path: "{{ target_user_home }}/.XCompose"
+        regexp: "{{ item.regex }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regex: '\u0107', replace: '\u00e7' } # ć -> ç (lowercase)
+        - { regex: '\u0106', replace: '\u00c7' } # Ć -> Ç (uppercase)
+      when: target_user_home is defined
+      tags: [system, cedilla]
+
 
     - name: Cedilla | Apply Flatpak overrides for Bitwarden (KDE)
       ansible.builtin.command:
         cmd: "flatpak override --user --nosocket=wayland --env=GTK_IM_MODULE=cedilla --env=XDG_CURRENT_DESKTOP=KDE --env=GTK_USE_PORTAL=1 com.bitwarden.desktop"
-      become_user: "{{ user_name }}"
+      become_user: "{{ target_user_name }}"
       register: bitwarden_override_kde
       failed_when: false
       changed_when: false
@@ -416,7 +372,7 @@
     - name: Cedilla | Apply Flatpak overrides for Zoom (KDE)
       ansible.builtin.command:
         cmd: "flatpak override --user --nosocket=wayland --env=GTK_IM_MODULE=cedilla --env=QT_IM_MODULE=cedilla --env=XDG_CURRENT_DESKTOP=KDE --env=GTK_USE_PORTAL=1 --filesystem=home us.zoom.Zoom"
-      become_user: "{{ user_name }}"
+      become_user: "{{ target_user_name }}"
       register: zoom_override
       failed_when: false
       changed_when: false
@@ -424,27 +380,27 @@
 
     - name: Cedilla | Ensure local applications directory exists
       ansible.builtin.file:
-        path: "{{ user_home }}/.local/share/applications"
+        path: "{{ target_user_home }}/.local/share/applications"
         state: directory
-        owner: "{{ user_name }}"
-        group: "{{ user_name }}"
+        owner: "{{ target_user_name }}"
+        group: "{{ target_user_name }}"
         mode: '0755'
       tags: [brave, cedilla]
 
     - name: Cedilla | Copy Brave desktop file to local share
       ansible.builtin.copy:
         src: /usr/share/applications/brave-browser.desktop
-        dest: "{{ user_home }}/.local/share/applications/brave-browser.desktop"
+        dest: "{{ target_user_home }}/.local/share/applications/brave-browser.desktop"
         remote_src: yes
-        owner: "{{ user_name }}"
-        group: "{{ user_name }}"
+        owner: "{{ target_user_name }}"
+        group: "{{ target_user_name }}"
         mode: '0644'
         force: no
       tags: [brave, cedilla]
 
     - name: Cedilla | Configure Brave to use X11 ozone platform
       ansible.builtin.replace:
-        path: "{{ user_home }}/.local/share/applications/brave-browser.desktop"
+        path: "{{ target_user_home }}/.local/share/applications/brave-browser.desktop"
         regexp: '^Exec=((?!.*--ozone-platform=x11).*?)(\s+(%[uU]|--incognito|--new-window))?$'
         replace: 'Exec=\1 --ozone-platform=x11\2'
       tags: [brave, cedilla]
@@ -452,32 +408,32 @@
     - name: Cedilla | Copy Chromium desktop file to local share
       ansible.builtin.copy:
         src: /usr/share/applications/chromium-browser.desktop
-        dest: "{{ user_home }}/.local/share/applications/chromium-browser.desktop"
+        dest: "{{ target_user_home }}/.local/share/applications/chromium-browser.desktop"
         remote_src: yes
-        owner: "{{ user_name }}"
-        group: "{{ user_name }}"
+        owner: "{{ target_user_name }}"
+        group: "{{ target_user_name }}"
         mode: '0644'
         force: no
       tags: [chromium, cedilla]
 
     - name: Cedilla | Configure Chromium to use X11 ozone platform
       ansible.builtin.replace:
-        path: "{{ user_home }}/.local/share/applications/chromium-browser.desktop"
+        path: "{{ target_user_home }}/.local/share/applications/chromium-browser.desktop"
         regexp: '^Exec=((?!.*--ozone-platform=x11).*?)(\s+(%[uU]|--incognito|--new-window))?$'
         replace: 'Exec=\1 --ozone-platform=x11\2'
       tags: [chromium, cedilla]
 
     - name: Cedilla | Update desktop database
       ansible.builtin.command:
-        cmd: "update-desktop-database {{ user_home }}/.local/share/applications/"
-      become_user: "{{ user_name }}"
+        cmd: "update-desktop-database {{ target_user_home }}/.local/share/applications/"
+      become_user: "{{ target_user_name }}"
       changed_when: false
       tags: [brave, chromium, cedilla]
 
     - name: Cedilla | Display completion message
       ansible.builtin.debug:
         msg: 
-          - "Cedilla fix applied to {{ user_home }}/.XCompose."
+          - "Cedilla fix applied to {{ target_user_home }}/.XCompose."
           - "Please log out of your session and re-login to effect changes."
       tags: [system, cedilla]
 
@@ -485,165 +441,155 @@
     - name: Shortcuts | Create local override for Steam shortcut
       ansible.builtin.copy:
         src: /usr/share/applications/steam.desktop
-        dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/applications/steam.desktop"
+        dest: "{{ user_home }}/.local/share/applications/steam.desktop"
         remote_src: yes
-        owner: "{{ ansible_env.SUDO_USER }}"
-        group: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
         mode: '0644'
         force: no
-      when: ansible_env.SUDO_USER is defined
+      when: user_name != 'root'
       tags: [software, steam, gpu]
 
     - name: Shortcuts | Update Exec line to use NVIDIA GPU
       ansible.builtin.replace:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/applications/steam.desktop"
+        path: "{{ user_home }}/.local/share/applications/steam.desktop"
         regexp: '^Exec=/usr/bin/steam\s+(.*)$'
         replace: 'Exec=env __NV_PRIME_RENDER_OFFLOAD=1 __NV_PRIME_RENDER_OFFLOAD_PROVIDER=NVIDIA-G0 __GLX_VENDOR_LIBRARY_NAME=nvidia /usr/bin/steam \1'
-      when: ansible_env.SUDO_USER is defined
+      when: user_name != 'root'
       tags: [software, steam, gpu]
     
     - name: Shortcuts | Update desktop database
       ansible.builtin.command:
-        cmd: "update-desktop-database {{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/applications/"
-      become_user: "{{ ansible_env.SUDO_USER }}"
+        cmd: "update-desktop-database {{ user_home }}/.local/share/applications/"
+      become_user: "{{ user_name }}"
       changed_when: false
-      when: ansible_env.SUDO_USER is defined
+      when: user_name != 'root'
       tags: [software, steam, gpu]
 
     # --- KDE Specific Configuration ---
     - name: KDE | Ensure konsole directory exists
       ansible.builtin.file:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole"
+        path: "{{ user_home }}/.local/share/konsole"
         state: directory
-        owner: "{{ ansible_env.SUDO_USER }}"
-        group: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
         mode: '0755'
-      when: is_kde and ansible_env.SUDO_USER is defined
+      when: is_kde and user_name != 'root'
       tags: [software, kde, konsole]
 
     - name: KDE | Download konsole profile
       ansible.builtin.get_url:
         url: "{{ konsole_profile_url }}"
-        dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole/kali-like-alt.profile"
-        owner: "{{ ansible_env.SUDO_USER }}"
+        dest: "{{ user_home }}/.local/share/konsole/kali-like-alt.profile"
+        owner: "{{ user_name }}"
         mode: '0644'
-      when: is_kde and ansible_env.SUDO_USER is defined
+      when: is_kde and user_name != 'root'
       tags: [software, kde, konsole]
 
     - name: KDE | Download konsole color scheme
       ansible.builtin.get_url:
         url: "{{ konsole_scheme_url }}"
-        dest: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.local/share/konsole/kali-like-alt.colorscheme"
-        owner: "{{ ansible_env.SUDO_USER }}"
+        dest: "{{ user_home }}/.local/share/konsole/kali-like-alt.colorscheme"
+        owner: "{{ user_name }}"
         mode: '0644'
-      when: is_kde and ansible_env.SUDO_USER is defined
+      when: is_kde and user_name != 'root'
       tags: [software, kde, konsole]
 
     - name: KDE | Disable konsole 'Remember window size'
       community.general.ini_file:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/konsolerc"
+        path: "{{ user_home }}/.config/konsolerc"
         section: "KonsoleWindow"
         option: RememberWindowSize
         value: "false"
-        owner: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
         mode: '0644'
-      when: is_kde and ansible_env.SUDO_USER is defined
+      when: is_kde and user_name != 'root'
       tags: [software, kde, konsole]
 
     - name: KDE | Set default konsole profile
       community.general.ini_file:
-        path: "{{ primary_user_data.ansible_facts.getent_passwd[ansible_env.SUDO_USER][4] }}/.config/konsolerc"
+        path: "{{ user_home }}/.config/konsolerc"
         section: "Desktop Entry"
         option: DefaultProfile
         value: "kali-like-alt.profile"
-        owner: "{{ ansible_env.SUDO_USER }}"
+        owner: "{{ user_name }}"
         mode: '0644'
-      when: is_kde and ansible_env.SUDO_USER is defined
+      when: is_kde and user_name != 'root'
       tags: [software, kde, konsole]
 
     # --- GNOME Specific Configuration (PTYxis) ---
     - name: GNOME | Set PTYxis terminal window size and behavior
       ansible.builtin.command: "gsettings set org.gnome.Ptyxis {{ item.key }} {{ item.value }}"
-      become_user: "{{ ansible_env.SUDO_USER }}"
+      become_user: "{{ user_name }}"
       loop:
         - { key: "restore-window-size", value: "{{ ptyxis_restore_window_size }}" }
         - { key: "default-columns", value: "{{ ptyxis_default_columns }}" }
         - { key: "default-rows", value: "{{ ptyxis_default_rows }}" }
-      when: is_gnome and ansible_env.SUDO_USER is defined
+      when: is_gnome and user_name != 'root'
       tags: [software, gnome, ptyxis]
 
     - name: GNOME | Set PTYxis cursor and font settings
       ansible.builtin.command: "dconf write /org/gnome/Ptyxis/{{ item.key }} \"{{ item.value }}\""
-      become_user: "{{ ansible_env.SUDO_USER }}"
+      become_user: "{{ user_name }}"
       loop:
         - { key: "cursor-shape", value: "'{{ ptyxis_cursor_shape }}'" }
         - { key: "cursor-blink-mode", value: "'{{ ptyxis_cursor_blink_mode }}'" }
         - { key: "use-system-font", value: "{{ ptyxis_use_system_font }}" }
         - { key: "font-name", value: "'{{ ptyxis_font_name }}'" }
-      when: is_gnome and ansible_env.SUDO_USER is defined
+      when: is_gnome and user_name != 'root'
       tags: [software, gnome, ptyxis]
 
     - name: GNOME | Get PTYxis default profile UUID
       ansible.builtin.shell: dconf read /org/gnome/Ptyxis/default-profile-uuid | tr -d "'"
       register: ptyxis_default_uuid
-      become_user: "{{ ansible_env.SUDO_USER }}"
+      become_user: "{{ user_name }}"
       changed_when: false
-      when: is_gnome and ansible_env.SUDO_USER is defined
+      when: is_gnome and user_name != 'root'
       tags: [software, gnome, ptyxis]
 
     - name: GNOME | Set PTYxis transparency
       ansible.builtin.command: "dconf write /org/gnome/Ptyxis/Profiles/{{ ptyxis_default_uuid.stdout }}/opacity {{ ptyxis_opacity }}"
-      become_user: "{{ ansible_env.SUDO_USER }}"
+      become_user: "{{ user_name }}"
       when: 
         - is_gnome 
-        - ansible_env.SUDO_USER is defined 
+        - user_name != 'root'
         - ptyxis_default_uuid.stdout != ""
       tags: [software, gnome, ptyxis]
 
-    # --- Python Libraries ---
-    - name: Python | Install markitdown globally
-      ansible.builtin.pip:
-        name: markitdown
-        state: present
-        executable: pip3
-      become: yes
-      tags: [software, python, markitdown]
-
-    - name: Python | Install markitdown[pdf]
-      ansible.builtin.pip:
-        name: markitdown[pdf]
-        state: present
-        executable: pip3
-      become: yes
-      tags: [software, python, markitdown]
-    
-    - name: Python | Install markitdown[docx]
-      ansible.builtin.pip:
-        name: markitdown[docx]
-        state: present
-        executable: pip3
-      become: yes
-      tags: [software, python, markitdown]
-
-    - name: Python | Install notebooklm-py
-      ansible.builtin.pip:
-        name: notebooklm-py
-        state: present
-        executable: pip3
-      become: yes
-      tags: [software, python, notebooklm]
-
-    - name: Python | Install notebooklm-py[browser]
-      ansible.builtin.pip:
-        name: "notebooklm-py[browser]"
-        state: present
-        executable: pip3
-      become: yes
-      tags: [software, python, notebooklm]
-
-    - name: Python | Install Playwright Chromium
+    - name: Python | Ensure pipx path is in user shell configuration
       ansible.builtin.command:
-        cmd: "python3 -m playwright install chromium"
+        cmd: "pipx ensurepath"
+      become_user: "{{ user_name }}"
+      changed_when: false
+      tags: [software, python, pipx]
+
+    # --- Python Libraries ---
+    - name: Python | Install specialized python libraries via pipx
+      community.general.pipx:
+        name: "{{ item }}"
+        state: install
+      become_user: "{{ user_name }}"
+      loop:
+        - markitdown
+        - notebooklm-py
+      tags: [software, python, markitdown, notebooklm]
+
+    - name: Python | Install extra features and playwright into pipx environments
+      ansible.builtin.command:
+        cmd: "pipx inject {{ item.base }} {{ item.extra }}"
+      become_user: "{{ user_name }}"
+      loop:
+        - { base: 'markitdown', extra: 'markitdown[pdf]' }
+        - { base: 'markitdown', extra: 'markitdown[docx]' }
+        - { base: 'notebooklm-py', extra: 'notebooklm-py[browser]' }
+        - { base: 'notebooklm-py', extra: 'playwright' }
+      changed_when: false
+      tags: [software, python, markitdown, notebooklm]
+
+    - name: Python | Install Playwright Chromium in notebooklm-py venv
+      ansible.builtin.shell:
+        cmd: "source {{ user_home }}/.local/share/pipx/venvs/notebooklm-py/bin/activate && playwright install chromium"
+        executable: /bin/bash
       become_user: "{{ user_name }}"
       changed_when: false
       tags: [software, python, notebooklm, playwright]

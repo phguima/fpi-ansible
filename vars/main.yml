@@ -45,10 +45,13 @@ dnf_packages_common:
   - clamav-update
   - darktable
   - fastfetch
+  - gparted
+  - htop
   - hwinfo
   - lm_sensors
   - nodejs
   - nvtop
+  - pipx
   - python3-pip
   - p7zip
   - p7zip-plugins
@@ -115,6 +118,13 @@ vscode_repo_url: "https://packages.microsoft.com/yumrepos/vscode"
 omz_install_script_url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 omz_theme_url: "https://raw.githubusercontent.com/phguima/fedora-stuffs/main/omz-themes/kali-like-alt.zsh-theme"
 omz_theme_name: "kali-like-alt"
+omz_plugins:
+  - git
+  - zsh-autosuggestions
+  - zsh-syntax-highlighting
+omz_custom_plugins:
+  - { name: "zsh-autosuggestions", repo: "https://github.com/zsh-users/zsh-autosuggestions" }
+  - { name: "zsh-syntax-highlighting", repo: "https://github.com/zsh-users/zsh-syntax-highlighting" }
 
 # Zsh Aliases
 zsh_aliases: |
